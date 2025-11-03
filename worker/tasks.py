@@ -1,16 +1,46 @@
-
 import os
+import csv
+import subprocess
+import tempfile
+from pathlib import Path
+
 from celery import shared_task, current_task
 from django.utils import timezone
 
 from dotenv import load_dotenv
 from worker.db import setup_django
-import subprocess
+
+# Initialize Django and env before importing Django-dependent modules
 setup_django()
 load_dotenv()
-from worker.models import Workflow, WorkflowRun, ScenarioClass, ScenarioLog
+
+from django.conf import settings
+from worker.models import (
+    Workflow,
+    WorkflowRun,
+    ScenarioClass,
+    ScenarioLog,
+    ScenarioComponentLink,
+    MainClass,
+)
 import requests
-import tempfile
+
+# =========================
+# Constants and utilities
+# =========================
+
+DEFAULT_WORKFLOW_TIMEOUT = 7200
+EVENTS_CSV_NAME = "Events1.csv"
+EVENTS_CSV_HEADER = [
+    "date_time",
+    "object_type_id",
+    "object_instance_id",
+    "object_type_property_id",
+    "tag",
+    "value",
+    "description",
+]
+
 
 def download_file(url: str) -> str:
     """Скачиваем файл по URL во временный каталог и возвращаем путь."""
@@ -77,6 +107,10 @@ def run_python_file(path: str, timeout: int = 3600):
     return proc.returncode, proc.stdout, proc.stderr
 
 
+# =========
+# Workflows
+# =========
+
 @shared_task(name="worker.run_workflow")
 def run_workflow(workflow_id: int, scheduler_id: int = None):
     """
@@ -112,7 +146,7 @@ def run_workflow(workflow_id: int, scheduler_id: int = None):
         code_url = f"{os.getenv('DJANGO_BASE_URL')}/media/{wf.code_file.url}"
         local_path = download_file(code_url)
 
-        rc, out, err = run_python_file(local_path, timeout=7200)
+        rc, out, err = run_python_file(local_path, timeout=DEFAULT_WORKFLOW_TIMEOUT)
         run.finished_at = timezone.now()
         run.output = out[:5000]
         run.error = err[:5000] if rc != 0 else None
@@ -127,12 +161,79 @@ def run_workflow(workflow_id: int, scheduler_id: int = None):
         run.finished_at = timezone.now()
         run.save()
         return {"status": "ERROR", "msg": str(e)}
+# ======================
+# Scenario: helpers/task
+# ======================
+
+def ensure_scenario_media_dir(scenario_id: int) -> Path:
+    media_root = Path(getattr(settings, "MEDIA_ROOT", Path.cwd() / "media"))
+    path = media_root / "scenarios" / str(scenario_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
+# === Scenario utilities ===
+def get_component_id_by_source_name(scenario_id: int, data_source_name: str) -> int | None:
+    link = (
+        ScenarioComponentLink.objects
+        .select_related("component__data_source")
+        .filter(
+            scenario_id=scenario_id,
+            component__data_source__data_source_name__iexact=data_source_name,
+        )
+        .first()
+    )
+    return link.component_id if link else None
+
+
+def resolve_component_ids(scenario_id: int) -> tuple[int | None, int | None]:
+    event_id = get_component_id_by_source_name(scenario_id, "Event")
+    model_id = get_component_id_by_source_name(scenario_id, "Model")
+    return event_id, model_id
+
+
+def generate_events_csv_for_scenario(scenario_id: int) -> tuple[int | None, int | None, str]:
+    """
+    Find Event and Model component IDs for the scenario, create a media folder,
+    and export MainClass rows for the Event component to Events1.csv.
+
+    Returns: (event_component_id, model_component_id, csv_path)
+    """
+    event_component_id, model_component_id = resolve_component_ids(scenario_id)
+
+    folder = ensure_scenario_media_dir(scenario_id)
+    csv_path = folder / EVENTS_CSV_NAME
+
+    # Query events data; if no event component, create empty file with header
+    qs = MainClass.objects.none()
+    if event_component_id:
+        qs = (
+            MainClass.objects
+            .select_related("object_instance", "object_type", "object_type_property")
+            .filter(scenario_id=scenario_id, component_id=event_component_id)
+            .order_by("date_time")
+        )
+
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(EVENTS_CSV_HEADER)
+        for row in qs.iterator():
+            writer.writerow([
+                row.date_time.isoformat() if row.date_time else "",
+                row.object_type_id,
+                row.object_instance_id,
+                row.object_type_property_id,
+                row.tag or "",
+                row.value or "",
+                (row.description or "").replace("\n", " "),
+            ])
+
+    return event_component_id, model_component_id, str(csv_path)
 
 
 @shared_task(name="worker.run_scenario")
 def run_scenario(scenario_id: int, start_date: str, end_date: str):
+    """Run scenario job and prepare Events1.csv before execution."""
     scenario = ScenarioClass.objects.get(pk=scenario_id)
     task_id = current_task.request.id
 
@@ -144,8 +245,19 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
     )
 
     try:
-        # Здесь вставишь реальный запуск GAP/Resolve
-        rc, out, err = 0, "Scenario done", ""
+        event_id, model_id, csv_path = generate_events_csv_for_scenario(scenario_id)
+        ScenarioLog.objects.create(
+            scenario=scenario,
+            timestamp=timezone.now(),
+            message=(
+                f"Prepared {EVENTS_CSV_NAME}; event_component_id={event_id}, "
+                f"model_component_id={model_id}; path={csv_path}"
+            ),
+            progress=25,
+        )
+        
+        # Actual scenario logic placeholder
+        rc = 0
 
         ScenarioLog.objects.create(
             scenario=scenario,
@@ -157,7 +269,12 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
         scenario.status = "SUCCESS" if rc == 0 else "ERROR"
         scenario.save(update_fields=["status"])
 
-        return {"status": scenario.status}
+        return {
+            "status": scenario.status,
+            "event_component_id": event_id,
+            "model_component_id": model_id,
+            "events_csv": str(csv_path),
+        }
 
     except Exception as e:
         ScenarioLog.objects.create(

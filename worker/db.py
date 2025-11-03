@@ -10,6 +10,9 @@ def setup_django():
     if settings.configured:
         return
 
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    media_root = os.environ.get("MEDIA_ROOT", os.path.join(base_dir, "media"))
+
     settings.configure(
         DATABASES = {
             'default': {
@@ -23,9 +26,14 @@ def setup_django():
             },
         },
         INSTALLED_APPS=[
+            "django.contrib.contenttypes",
+            "django.contrib.auth",
+            "smart_selects",
             "worker",  # регистрируем свои модели
         ],
         TIME_ZONE="Asia/Almaty",
         USE_TZ=True,
+        MEDIA_URL="/media/",
+        MEDIA_ROOT=media_root,
     )
     django.setup()
