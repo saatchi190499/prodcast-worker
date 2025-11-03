@@ -173,13 +173,13 @@ def ensure_scenario_media_dir(scenario_id: int) -> Path:
 
 
 # === Scenario utilities ===
-def get_component_id_by_component_name(scenario_id: int, component_name: str) -> int | None:
+def get_component_id_by_source_name(scenario_id: int, data_source_name: str) -> int | None:
     link = (
         ScenarioComponentLink.objects
-        .select_related("component")
+        .select_related("component__data_source")
         .filter(
             scenario_id=scenario_id,
-            component__name__iexact=component_name,
+            component__data_source__data_source_name__iexact=data_source_name,
         )
         .first()
     )
@@ -187,8 +187,8 @@ def get_component_id_by_component_name(scenario_id: int, component_name: str) ->
 
 
 def resolve_component_ids(scenario_id: int) -> tuple[int | None, int | None]:
-    event_id = get_component_id_by_component_name(scenario_id, "Event")
-    model_id = get_component_id_by_component_name(scenario_id, "Model")
+    event_id = get_component_id_by_source_name(scenario_id, "Events")
+    model_id = get_component_id_by_source_name(scenario_id, "Models")
     return event_id, model_id
 
 
