@@ -1,8 +1,10 @@
 import os
+import datetime as dt
 import csv
 import subprocess
 import tempfile
 from pathlib import Path
+import shutil
 
 from celery import shared_task, current_task
 from django.utils import timezone
@@ -22,6 +24,9 @@ from worker.models import (
     ScenarioLog,
     ScenarioComponentLink,
     MainClass,
+    DataSourceComponent,
+    UnitSystem,
+    UnitSystemCategoryDefinition,
 )
 import requests
 
@@ -32,19 +37,42 @@ import requests
 DEFAULT_WORKFLOW_TIMEOUT = 7200
 EVENTS_CSV_NAME = "Events1.csv"
 EVENTS_CSV_HEADER = [
-    "date_time",
-    "object_type_id",
-    "object_instance_id",
-    "object_type_property_id",
-    "tag",
-    "value",
+    "Date",
+    "Type",
+    "Name",
+    "Action",
+    "Value",
+    "Unit",
+    "Category",
     "description",
 ]
+
+# Preferred target unit system for export (can override via env)
+TARGET_UNIT_SYSTEM_NAME = os.getenv("UNIT_SYSTEM_NAME", "Norwegian S.I.")
+
+def build_unit_mapping(unit_system_name: str) -> tuple[object | None, dict[int, object]]:
+    """
+    Build a mapping from UnitCategory.id -> UnitDefinition for a given unit system.
+    Returns (unit_system_obj_or_None, mapping_dict).
+    """
+    try:
+        us = UnitSystem.objects.get(unit_system_name=unit_system_name)
+    except UnitSystem.DoesNotExist:
+        return None, {}
+
+    pairs = (
+        UnitSystemCategoryDefinition.objects
+        .select_related("unit_category", "unit_definition")
+        .filter(unit_system=us)
+    )
+    mapping = {p.unit_category_id: p.unit_definition for p in pairs}
+    return us, mapping
 
 
 def download_file(url: str) -> str:
     """Скачиваем файл по URL во временный каталог и возвращаем путь."""
-    r = requests.get(url, timeout=60)
+    # Bypass proxies for internal hosts
+    r = requests.get(url, timeout=60, proxies={})
     r.raise_for_status()
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".py")
     with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
@@ -192,17 +220,19 @@ def resolve_component_ids(scenario_id: int) -> tuple[int | None, int | None]:
     return event_id, model_id
 
 
-def generate_events_csv_for_scenario(scenario_id: int) -> tuple[int | None, int | None, str]:
+def generate_events_csv_for_scenario(scenario_id: int) -> tuple[int | None, int | None, str, str | None]:
     """
     Find Event and Model component IDs for the scenario, create a media folder,
     and export MainClass rows for the Event component to Events1.csv.
+    Also copies the linked Model component file into the same folder (if present).
 
-    Returns: (event_component_id, model_component_id, csv_path)
+    Returns: (event_component_id, model_component_id, csv_path, model_file_path or None)
     """
     event_component_id, model_component_id = resolve_component_ids(scenario_id)
 
     folder = ensure_scenario_media_dir(scenario_id)
     csv_path = folder / EVENTS_CSV_NAME
+    model_copied_path: str | None = None
 
     # Query events data; if no event component, create empty file with header
     qs = MainClass.objects.none()
@@ -210,25 +240,204 @@ def generate_events_csv_for_scenario(scenario_id: int) -> tuple[int | None, int 
         qs = (
             MainClass.objects
             .select_related("object_instance", "object_type", "object_type_property")
-            .filter(scenario_id=scenario_id, component_id=event_component_id)
+            .filter(component_id=event_component_id)
             .order_by("date_time")
         )
+
+    # Prepare unit conversion mapping for target system
+    _, unit_map = build_unit_mapping(TARGET_UNIT_SYSTEM_NAME)
 
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(EVENTS_CSV_HEADER)
         for row in qs.iterator():
+            # Date as Excel serial number (date only); 0 if missing
+            if row.date_time:
+                dtv = row.date_time
+                try:
+                    if timezone.is_aware(dtv):
+                        dtv = timezone.localtime(dtv)
+                except Exception:
+                    pass
+                d_only = dtv.date()
+                excel_epoch_date = dt.date(1899, 12, 30)
+                date_val = (d_only - excel_epoch_date).days
+            else:
+                date_val = 0
+            type_name = (
+                row.object_type.object_type_name if getattr(row, "object_type", None) else ""
+            )
+            name = (
+                row.object_instance.object_instance_name if getattr(row, "object_instance", None) else ""
+            )
+            # Prefer explicit tag as action; fallback to property name
+            action = row.tag or (
+                row.object_type_property.object_type_property_name
+                if getattr(row, "object_type_property", None)
+                else ""
+            )
+            # Convert value and unit to target unit system if mapping exists
+            value = row.value or ""
+            unit = ""
+            target_ud = None
+            if getattr(row, "object_type_property", None):
+                uc_id = getattr(row.object_type_property, "unit_category_id", None)
+                target_ud = unit_map.get(uc_id) if uc_id else None
+
+            if target_ud:
+                # Try numeric conversion from base unit to target
+                try:
+                    val_base = float(value)
+                    s = float(target_ud.scale_factor)
+                    o = float(target_ud.offset)
+                    # Base -> target: target = (base - o)/s
+                    val_target = (val_base - o) / s if s != 0 else val_base
+                    # format using target precision if present
+                    precision = getattr(target_ud, "precision", None)
+                    if isinstance(precision, int) and precision >= 0:
+                        fmt = f"{{:.{precision}f}}"
+                        value = fmt.format(val_target)
+                    else:
+                        value = str(val_target)
+                    unit = target_ud.alias_text or target_ud.unit_definition_name or ""
+                except Exception:
+                    # Fallback to original value; best-effort unit label
+                    unit = target_ud.alias_text or target_ud.unit_definition_name or ""
+            else:
+                # No mapping: try to output base unit information if available
+                if getattr(row, "object_type_property", None) and getattr(row.object_type_property, "unit", None):
+                    _unit = row.object_type_property.unit
+                    unit = _unit.alias_text or _unit.unit_definition_name or ""
+            category = (
+                row.object_type_property.object_type_property_category
+                if getattr(row, "object_type_property", None)
+                else ""
+            )
+            description = (row.description or "").replace("\n", " ")
             writer.writerow([
-                row.date_time.isoformat() if row.date_time else "",
-                row.object_type_id,
-                row.object_instance_id,
-                row.object_type_property_id,
-                row.tag or "",
-                row.value or "",
-                (row.description or "").replace("\n", " "),
+                date_val,
+                type_name,
+                name,
+                action,
+                value,
+                unit,
+                category,
+                description,
             ])
 
-    return event_component_id, model_component_id, str(csv_path)
+    # Download the model file from the component only (no local copy branch)
+    if model_component_id:
+        try:
+            comp = DataSourceComponent.objects.get(pk=model_component_id)
+            # Download the component file via Django's MEDIA url
+            base = os.getenv('DJANGO_BASE_URL')
+            file_field = getattr(comp, 'file', None)
+            if base and file_field:
+                url = getattr(file_field, 'url', None)
+                name = getattr(file_field, 'name', None)
+                if not url and name:
+                    url = f"/media/{name}"
+                if url:
+                    # Only allow .rsa files
+                    candidate_name = name if name else str(url)
+                    ext = Path(candidate_name).suffix.lower()
+                    if ext != ".rsa":
+                        ScenarioLog.objects.create(
+                            scenario_id=scenario_id,
+                            timestamp=timezone.now(),
+                            message=f"Model file skipped due to extension '{ext}'. Only .rsa allowed.",
+                            progress=20,
+                        )
+                    else:
+                        # If url is absolute, use as-is; else join with base
+                        url_str = str(url)
+                        if url_str.startswith('http://') or url_str.startswith('https://'):
+                            full_url = url_str
+                        else:
+                            full_url = base.rstrip('/') + '/' + url_str.lstrip('/')
+                        try:
+                            ScenarioLog.objects.create(
+                                scenario_id=scenario_id,
+                                timestamp=timezone.now(),
+                                message=f"Downloading model file from {full_url}",
+                                progress=20,
+                            )
+                            # Bypass environment proxies explicitly
+                            r = requests.get(
+                                full_url,
+                                timeout=60,
+                                stream=True,
+                                proxies={"http": None, "https": None},
+                            )
+                            status = r.status_code
+                            r.raise_for_status()
+                            filename = Path(name).name if name else Path(url).name
+                            dst = folder / filename
+                            with open(dst, 'wb') as out:
+                                for chunk in r.iter_content(chunk_size=8192):
+                                    if chunk:
+                                        out.write(chunk)
+                            model_copied_path = str(dst)
+                            ScenarioLog.objects.create(
+                                scenario_id=scenario_id,
+                                timestamp=timezone.now(),
+                                message=f"Downloaded model file to {model_copied_path}",
+                                progress=22,
+                            )
+                        except Exception as e:
+                            # Try local MEDIA_ROOT fallback if download fails
+                            media_root = Path(getattr(settings, 'MEDIA_ROOT', Path.cwd() / 'media'))
+                            rel_path = Path(name) if name else Path(url_str)
+                            local_candidate = media_root / rel_path  # MEDIA_ROOT/models_files/file.rsa
+                            if not local_candidate.exists():
+                                # Secondary: just basename under MEDIA_ROOT
+                                local_candidate = media_root / rel_path.name
+                            if local_candidate.exists():
+                                try:
+                                    dst = folder / local_candidate.name
+                                    shutil.copy2(local_candidate, dst)
+                                    model_copied_path = str(dst)
+                                    ScenarioLog.objects.create(
+                                        scenario_id=scenario_id,
+                                        timestamp=timezone.now(),
+                                        message=f"Copied model file from local MEDIA_ROOT: {local_candidate}",
+                                        progress=22,
+                                    )
+                                except Exception:
+                                    ScenarioLog.objects.create(
+                                        scenario_id=scenario_id,
+                                        timestamp=timezone.now(),
+                                        message=f"Failed to copy local model file: {local_candidate}",
+                                        progress=22,
+                                    )
+                            else:
+                                ScenarioLog.objects.create(
+                                    scenario_id=scenario_id,
+                                    timestamp=timezone.now(),
+                                    message=f"Failed to download model file from {full_url}: {e}",
+                                    progress=22,
+                                )
+                else:
+                    ScenarioLog.objects.create(
+                        scenario_id=scenario_id,
+                        timestamp=timezone.now(),
+                        message="Model component file has no url/name to build download URL",
+                        progress=20,
+                    )
+            else:
+                ScenarioLog.objects.create(
+                    scenario_id=scenario_id,
+                    timestamp=timezone.now(),
+                    message="Cannot download model: DJANGO_BASE_URL or component.file missing",
+                    progress=20,
+                )
+        except DataSourceComponent.DoesNotExist:
+            pass
+        except Exception:
+            # best-effort copy; ignore failures
+            pass
+
+    return event_component_id, model_component_id, str(csv_path), model_copied_path
 
 
 @shared_task(name="worker.run_scenario")
@@ -245,13 +454,13 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
     )
 
     try:
-        event_id, model_id, csv_path = generate_events_csv_for_scenario(scenario_id)
+        event_id, model_id, csv_path, model_path = generate_events_csv_for_scenario(scenario_id)
         ScenarioLog.objects.create(
             scenario=scenario,
             timestamp=timezone.now(),
             message=(
                 f"Prepared {EVENTS_CSV_NAME}; event_component_id={event_id}, "
-                f"model_component_id={model_id}; path={csv_path}"
+                f"model_component_id={model_id}; path={csv_path}; model_file={model_path}"
             ),
             progress=25,
         )
@@ -274,6 +483,7 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
             "event_component_id": event_id,
             "model_component_id": model_id,
             "events_csv": str(csv_path),
+            "model_file": model_path,
         }
 
     except Exception as e:

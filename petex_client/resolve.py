@@ -3,6 +3,10 @@ from .server import PetexServer
 def start(srv: PetexServer) -> None:
     srv.do_cmd("Resolve.Start()")
 
+def extract_archive(srv: PetexServer, archive_file, archive_dir):
+    srv.do_cmd('Resolve.EXTRACTARCHIVE(\''+ archive_file +'\', \''+ archive_dir + '\')')  
+    return None
+
 def open_file(srv: PetexServer, path: str) -> None:
     srv.do_cmd(f"RESOLVE.OPENFILE('{path}')")
 
