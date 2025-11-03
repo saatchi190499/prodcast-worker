@@ -1,91 +1,110 @@
-from sqlalchemy import Column, String, Integer, DECIMAL, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
 
-class MainClass(Base):
-    __tablename__ = "catalogapp_mainclass"
+# ========= New schema (apiapp_*) =========
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    data_source_type = Column(String, index=True)
-    data_source_id = Column(String, index=True)
-    object_type_id = Column(String, index=True)
+class MainClass(Base):
+    __tablename__ = "apiapp_mainclass"
+
+    data_set_id = Column(Integer, primary_key=True, autoincrement=True)
+    scenario_id = Column(Integer, index=True, nullable=True)
+    component_id = Column(Integer, index=True, nullable=True)
+    object_type_id = Column(Integer, index=True)
     object_instance_id = Column(Integer)
     object_type_property_id = Column(Integer)
-    value = Column(DECIMAL(precision=30, scale=20))
-    date = Column(String)
-    sub_data_source = Column(String)
-    description = Column(String)
+    value = Column(String(100), nullable=True)
+    date = Column(DateTime, nullable=True)  # Django field is date_time with db_column='date'
+    tag = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
 
     def __repr__(self):
-        return (f"<MainClass(id={self.id}, data_source_type={self.data_source_type}, data_source_id={self.data_source_id},"
-                f" object_type_id={self.object_type_id}, object_instance_id={self.object_instance_id}, object_type_property_id={self.object_type_property_id},"
-                f" value={self.value}, date={self.date}, sub_data_source={self.sub_data_source}, description={self.description})>")
+        return (
+            f"<MainClass(data_set_id={self.data_set_id}, scenario_id={self.scenario_id}, component_id={self.component_id},"
+            f" object_type_id={self.object_type_id}, object_instance_id={self.object_instance_id}, object_type_property_id={self.object_type_property_id},"
+            f" value={self.value}, date={self.date}, tag={self.tag})>"
+        )
+
 
 class ObjectInstance(Base):
-    __tablename__ = "catalogapp_objectinstance"
+    __tablename__ = "apiapp_object_instance"
 
     object_instance_id = Column(Integer, primary_key=True)
     object_instance_name = Column(String)
     object_type_id = Column(Integer)
 
     def __repr__(self):
-        return f"<ObjectInstance(object_instance_id={self.object_instance_id}, object_instance_name={self.object_instance_name}, object_type_id={self.object_type_id})>"
+        return (
+            f"<ObjectInstance(object_instance_id={self.object_instance_id}, object_instance_name={self.object_instance_name},"
+            f" object_type_id={self.object_type_id})>"
+        )
+
 
 class ObjectTypeProperty(Base):
-    __tablename__ = "catalogapp_objecttypeproperty"
+    __tablename__ = "apiapp_object_type_property"
 
     object_type_property_id = Column(Integer, primary_key=True)
     object_type_property_name = Column(String)
     object_type_property_category = Column(String)
     object_type_id = Column(Integer)
+    openserver = Column(String, nullable=True)
+    unit_category_id = Column(Integer, nullable=True)
+    unit_id = Column(Integer, nullable=True)
 
     def __repr__(self):
-        return (f"<ObjectTypeProperty(object_type_property_id={self.object_type_property_id}, object_type_property_name={self.object_type_property_name},"
-                f" object_type_property_category={self.object_type_property_category}, object_type_id={self.object_type_id})>")
-
-
-
-class ScenarioJob(Base):
-    __tablename__ = "catalogapp_scenariojob"
-    id = Column(Integer, primary_key=True)
-    celery_id = Column(String(255), index=True)
-    state = Column(String(16))
-    progress = Column(Integer)
-    message = Column(Text)
-    selected_server_id = Column(Integer, ForeignKey("catalogapp_serversclass.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True))
-    started_at = Column(DateTime(timezone=True))
-    finished_at = Column(DateTime(timezone=True))
-    result_path = Column(Text)
-    scenario_id = Column(Text)
-
-class ServersClass(Base):
-    __tablename__ = "catalogapp_serversclass"
-    id = Column(Integer, primary_key=True)
-    server_name = Column(String(255), unique=True)
+        return (
+            f"<ObjectTypeProperty(id={self.object_type_property_id}, name={self.object_type_property_name},"
+            f" category={self.object_type_property_category}, object_type_id={self.object_type_id})>"
+        )
 
 
 class ScenarioClass(Base):
-    __tablename__ = "catalogapp_scenarioclass"
-    scenario_id = Column(String(50), primary_key=True)   # PK в Django
+    __tablename__ = "apiapp_scenarios"
+
+    scenario_id = Column(Integer, primary_key=True)
     scenario_name = Column(String(50), nullable=False)
-
-    created_date = Column(DateTime)
-    start_date   = Column(DateTime, nullable=True)
-    end_date     = Column(DateTime, nullable=True)
-
-    status      = Column(String(50))     # ← будем обновлять
-    description = Column(Text)           # ← можно обновлять по желанию
-
-    # FK-холдеры (как обычные колонки, без ForeignKey — они не нужны для апдейта)
-    server_id            = Column(Integer, nullable=True)
-    models_id_id         = Column(Integer, nullable=True)
-    trends_set_id_id     = Column(String(50), nullable=True)
-    events_set_id_id     = Column(String(50), nullable=True)
-    fixed_wells_set_id_id= Column(Integer, nullable=True)
-    created_by_id        = Column(Integer, nullable=True)
+    description = Column(Text)
+    status = Column(String(50))
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    created_date = Column(DateTime, nullable=True)
 
     def __repr__(self) -> str:
         return f"<ScenarioClass id={self.scenario_id} name={self.scenario_name} status={self.status}>"
+
+
+class DataSource(Base):
+    __tablename__ = "apiapp_data_source"
+
+    id = Column(Integer, primary_key=True)
+    data_source_name = Column(String(50), unique=True)
+    data_source_type = Column(String(20))
+
+
+class DataSourceComponent(Base):
+    __tablename__ = "apiapp_data_source_component"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True)
+    data_source_id = Column(Integer, ForeignKey("apiapp_data_source.id"))
+
+
+class ScenarioComponentLink(Base):
+    __tablename__ = "apiapp_scenario_component_link"
+
+    id = Column(Integer, primary_key=True)
+    scenario_id = Column(Integer, ForeignKey("apiapp_scenarios.scenario_id"))
+    component_id = Column(Integer, ForeignKey("apiapp_data_source_component.id"))
+
+
+class ScenarioLog(Base):
+    __tablename__ = "apiapp_scenariolog"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scenario_id = Column(Integer, ForeignKey("apiapp_scenarios.scenario_id"))
+    timestamp = Column(DateTime(timezone=True))
+    status = Column(String(50), nullable=True)  # optional compatibility
+    message = Column(Text)
+    progress = Column(Integer)

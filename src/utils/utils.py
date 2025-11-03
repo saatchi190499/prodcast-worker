@@ -2,7 +2,11 @@
 # src/utils/utils.py
 import logging
 from pathlib import Path
+from datetime import datetime
 from core.config import settings
+from core.db_config import Session
+from schemas.models import ScenarioClass as SA_ScenarioClass  # noqa: F401 (kept for FK integrity)
+from schemas.models import ScenarioLog as SA_ScenarioLog
 
 def handle_large_values(value):
     try:
@@ -61,9 +65,48 @@ def get_api_logger() -> tuple[logging.Logger, logging.Handler]:
     return _setup_file_logger(path, name="api", mode="a")
 
 def get_scenario_api_logger(scenario_id: str) -> tuple[logging.Logger, logging.Handler]:
-    """Лог для конкретного сценария: WorkServerLogs/<scenario_id>/api.log (рядом с src)"""
-    path = _logs_root() / str(scenario_id) / "api.log"
-    return _setup_file_logger(path, name=f"api.scenario.{scenario_id}", mode="a")
+    """
+    Scenario logger that writes ONLY to DB (apiapp_scenariolog).
+    Returns (logger, handler) so caller can close the handler if desired.
+    """
+    logger = logging.getLogger(f"api.scenario.{scenario_id}")
+    logger.setLevel(logging.INFO)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # Resolve integer scenario_id (extract digits like SC123 -> 123)
+    try:
+        sc_digits = "".join(ch for ch in str(scenario_id) if ch.isdigit())
+        sc_int = int(sc_digits) if sc_digits else None
+    except Exception:
+        sc_int = None
+
+    class DBScenarioLogHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if sc_int is None:
+                return
+            session = Session()
+            try:
+                progress = getattr(record, "progress", 0)
+                session.add(
+                    SA_ScenarioLog(
+                        scenario_id=sc_int,
+                        timestamp=datetime.utcnow(),
+                        message=self.format(record) if self.formatter else record.getMessage(),
+                        progress=int(progress) if isinstance(progress, (int, float)) else 0,
+                    )
+                )
+                session.commit()
+            except Exception:
+                session.rollback()
+            finally:
+                session.close()
+
+    dbh = DBScenarioLogHandler(level=logging.INFO)
+    dbh.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(dbh)
+
+    return logger, dbh
 
 def sc_folder_id(sid) -> str:
     s = str(sid).strip()

@@ -1,32 +1,37 @@
-from utils.utils import convert_input_data, handle_large_values
+from utils.utils import handle_large_values
 from core.config import logger, settings
 from core.db_config import Session
-from core.const import NAME_MAPPING
-from schemas.models import MainClass, ObjectInstance, ObjectTypeProperty, ScenarioJob
-from typing import Dict, List, Tuple
+from schemas.models import (
+    MainClass,
+    ObjectInstance,
+    ObjectTypeProperty,
+    ScenarioClass,
+)
+from typing import Dict, List, Tuple, Optional
 from .scenario_status import set_scenario_status
+from datetime import datetime
 
 def create_entry(
-        data_source_type: str, 
-        data_source_id: str, 
-        object_type_id: int, 
-        object_instance_id: int, 
-        object_type_property_id: int, 
-        date: str, 
-        value: float, 
-        sub_data_source: str, 
-        description: str
-    ):
+    scenario_id: int,
+    component_id: int,
+    object_type_id: int,
+    object_instance_id: int,
+    object_type_property_id: int,
+    date_time,
+    value: str,
+    tag: Optional[str] = None,
+    description: Optional[str] = None,
+):
     return MainClass(
-        data_source_type=data_source_type,
-        data_source_id=data_source_id,
+        scenario_id=scenario_id,
+        component_id=component_id,
         object_type_id=object_type_id,
         object_instance_id=object_instance_id,
         object_type_property_id=object_type_property_id,
-        date=date,
-        value=float(value),
-        sub_data_source=sub_data_source,
-        description=description
+        date=date_time,
+        value=str(value) if value is not None else None,
+        tag=tag,
+        description=description,
     )
 
 
@@ -40,119 +45,28 @@ def get_mappings(session):
     return instance_mapping, property_mapping
 
 
-def delete_results_from_db(
-        # scenario_id: int,
-        scenario_id: str,
-        data_source_type: str
-    ):
+def _normalize_scenario_id_to_int(sid: str) -> int:
+    s = (sid or "").strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if not digits:
+        raise ValueError(f"Cannot normalize scenario id to int: {sid}")
+    return int(digits)
+
+
+def delete_results_from_db(scenario_id: str):
+    """Delete previous results for scenario only (by sc_id)."""
     session = Session()
-    # data_source_id = data_source_type + str(scenario_id)
-    data_source_id = str(scenario_id)
-    print(f'delete {data_source_id}')
     try:
-        num_deleted = session.query(MainClass).filter_by(data_source_id=data_source_id).delete()
+        sc_id = _normalize_scenario_id_to_int(scenario_id)
+        num_deleted = session.query(MainClass).filter(MainClass.scenario_id == sc_id).delete()
         session.commit()
-        logger.info(f"{num_deleted} entries deleted from the database.")
-    except Exception as e:
+        logger.info("%s entries deleted from the database (scenario=%s).", num_deleted, sc_id)
+    except Exception:
         logger.error("An error occurred while deleting from the database:", exc_info=True)
         session.rollback()
     finally:
         session.close()
 
-
-def save_process_results(
-        scenario_id: str,
-        keys: str,
-        values: str,
-        timestep: str,
-        current_timestep: str,
-        celery_id: str
-    ):
-    session = Session()
-
-    if current_timestep == 'timestep_0':
-        delete_results_from_db(scenario_id, 'RS')
-
-    data_source_type = 'RS'
-    # data_source_id = data_source_type + str(scenario_id)
-    data_source_id = str(scenario_id)
-    print(f'process {data_source_id}')
-    converted_data = convert_input_data(keys, values, timestep)
-
-    instance_mapping, property_mapping = get_mappings(session)
-
-    existing_entries = session.query(MainClass).filter_by(data_source_id=data_source_id).all()
-    existing_keys = {
-        (entry.object_instance_id, entry.object_type_property_id, entry.date)
-        for entry in existing_entries
-    }
-
-    entries = []
-    missing_keys = set()
-    missing_instances = set()
-
-    for key, value in converted_data.items():
-        if key == "timestep":
-            continue
-
-        object_instance_info = NAME_MAPPING.get(key)
-
-        if object_instance_info is None:
-            continue
-
-        object_instance_name = object_instance_info["instance_name"]
-        property_name = object_instance_info["property_name"]
-
-        if object_instance_name not in instance_mapping:
-            missing_instances.add(object_instance_name)
-            continue
-
-        instance_id, obj_type_id = instance_mapping[object_instance_name]
-        property_id = property_mapping.get(property_name)
-
-        if not property_id:
-            missing_keys.add(key)
-            continue
-
-        if (instance_id, property_id, timestep) not in existing_keys:
-            entries.append(
-                create_entry(
-                    data_source_type,
-                    data_source_id,
-                    obj_type_id,
-                    instance_id,
-                    property_id,
-                    converted_data['time'],
-                    value,
-                    'test',
-                    ''
-                )
-            )
-    try:
-        if entries:
-            session.bulk_save_objects(entries)
-
-        updates = [{
-            "id": celery_id,         
-            "message": timestep,     
-            "state": "PROGRESS",     
-        }]
-
-        session.bulk_update_mappings(ScenarioJob, updates)
-        session.commit()
-        
-        set_scenario_status(scenario_id, timestep)
-        logger.info(
-            f"{len(entries)} new entries saved; message updated for job {celery_id}."
-            if entries else
-            f"No new entries; message updated for job {celery_id}."
-        )
-
-    except Exception as e:
-        logger.info(f"Failed to save results to the database: {e}")
-        session.rollback()
-    finally:
-        session.close()
 
 
 
@@ -187,27 +101,27 @@ def save_gap_results(
     session = Session()
     try:
         if current_timestep == 'timestep_0':
-            delete_results_from_db(scenario_id, 'GA')
+            delete_results_from_db(scenario_id)
 
-        data_source_type = 'GA'
-        data_source_id = str(scenario_id)
-        logger.info(f'[GAP] scenario={data_source_id} timestep={timestep}')
+        sc_id = _normalize_scenario_id_to_int(scenario_id)
+        component_id = None  # write by scenario only
+        logger.info(f'[GAP] scenario={sc_id} timestep={timestep}')
 
         # маппинги из БД
         instance_mapping, property_mapping = get_mappings(session)
-
+        
         # привязка свойств к названию входных серий (как вы описали)
         property_ids = {
-            "str_gap_oil_rate": property_mapping.get("Oil_rate"),
-            "str_gap_gas_rate": property_mapping.get("Gas_rate"),
+            "str_gap_oil_rate": property_mapping.get("OilRate"),
+            "str_gap_gas_rate": property_mapping.get("GasRate"),
             "str_gap_pcontrol": property_mapping.get("dPChoke"),
-            "str_gap_pres": property_mapping.get("Reservoir_pressure"),
-            "str_gap_fwhp": property_mapping.get("WHP_bar"),
+            "str_gap_pres": property_mapping.get("ReservoirPressure"),
+            "str_gap_fwhp": property_mapping.get("WHPressure"),
             "str_gap_gor": property_mapping.get("GOR"),
-            "str_gap_wc": property_mapping.get("water_cut"),
+            "str_gap_wc": property_mapping.get("WCT"),
             # drawdown можно сохранить как отдельное свойство, если у вас есть id:
             # при его отсутствии пропустим
-            "str_gap_drawdown": property_mapping.get("drawdown"),
+            "str_gap_drawdown": property_mapping.get("Drawdown"),
         }
 
         # списки скважин и их "юнитов" (сепараторов)
@@ -220,9 +134,19 @@ def save_gap_results(
 
         # преобразуем timestep 'timestep_01/01/2025' -> '01/01/2025'
         try:
-            timestep_conv = timestep.split('_', 1)[1]
+            timestep_conv_str = timestep.split('_', 1)[1]
         except Exception:
-            timestep_conv = timestep  # в крайнем случае сохраняем как есть
+            timestep_conv_str = timestep  # в крайнем случае сохраняем как есть
+        # parse to datetime
+        dt = None
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d.%m.%Y"):
+            try:
+                dt = datetime.strptime(timestep_conv_str, fmt)
+                break
+            except Exception:
+                continue
+        if dt is None:
+            dt = datetime.utcnow()
 
         # подготовим серии значений
         series_map: Dict[str, List[str]] = {
@@ -278,15 +202,15 @@ def save_gap_results(
             for value, prop_id in per_well_values:
                 entries.append(
                     create_entry(
-                        data_source_type=data_source_type,
-                        data_source_id=data_source_id,
+                        scenario_id=sc_id,
+                        component_id=component_id,
                         object_type_id=object_type_id,
                         object_instance_id=object_instance_id,
                         object_type_property_id=prop_id,
-                        date=timestep_conv,
-                        value=value,
-                        sub_data_source=unit_label,
-                        description=''
+                        date_time=dt,
+                        value=str(value),
+                        tag=unit_label,
+                        description='',
                     )
                 )
 
