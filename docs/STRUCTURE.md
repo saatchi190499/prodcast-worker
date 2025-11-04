@@ -1,21 +1,21 @@
 Project Layout
 
-- `app/` — Shared service package (FastAPI + shared DB access)
-  - `app/main.py` — FastAPI entrypoint
-  - `app/api/` — API routers and endpoints
-    - `app/api/api.py` — Root router
-    - `app/api/v1/endpoints/` — Versioned endpoints (e.g., `results.py`)
-  - `app/core/` — Settings and DB engine
-    - `app/core/config.py` — Pydantic settings from `.env`
-    - `app/core/db_config.py` — SQLAlchemy engine/session factory
-  - `app/schemas/` — Pydantic and SQLAlchemy schemas
-    - `app/schemas/api.py` — Request/response models
-    - `app/schemas/models.py` — SQLAlchemy models mapped to the Django DB
-  - `app/services/` — Application services (DB write logic, orchestration)
-    - `app/services/db_manager.py` — Persist GAP results into DB
-  - `app/utils/` — Small reusable utilities
-    - `app/utils/helpers.py` — Scenario logging via SQLAlchemy
-    - `app/utils/utils.py` — Numeric helpers (e.g., large value handling)
+- `resolve_api/` — Shared service package (FastAPI + shared DB access)
+  - `resolve_api/main.py` — FastAPI entrypoint
+  - `resolve_api/api/` — API routers and endpoints
+    - `resolve_api/api/api.py` — Root router
+    - `resolve_api/api/v1/endpoints/` — Versioned endpoints (e.g., `results.py`)
+  - `resolve_api/core/` — Settings and DB engine
+    - `resolve_api/core/config.py` — Pydantic settings from `.env`
+    - `resolve_api/core/db_config.py` — SQLAlchemy engine/session factory
+  - `resolve_api/schemas/` — Pydantic and SQLAlchemy schemas
+    - `resolve_api/schemas/api.py` — Request/response models
+    - `resolve_api/schemas/models.py` — SQLAlchemy models mapped to the Django DB
+  - `resolve_api/services/` — Application services (DB write logic, orchestration)
+    - `resolve_api/services/db_manager.py` — Persist GAP results into DB
+  - `resolve_api/utils/` — Small reusable utilities
+    - `resolve_api/utils/helpers.py` — Scenario logging via SQLAlchemy
+    - `resolve_api/utils/utils.py` — Numeric helpers (e.g., large value handling)
 
 - `worker/` — Celery + Django ORM based worker
   - `worker/celery.py` — Celery app and queues
@@ -31,6 +31,6 @@ Project Layout
 Notes
 
 - The worker (Django ORM) and API (SQLAlchemy) both target the same database tables.
-- The API-side helpers and services were consolidated under `app/` to avoid duplication inside `src/`.
+- The API-side helpers and services were consolidated under `resolve_api/` to avoid duplication inside `src/`.
 - Worker code remains under `worker/` and untouched in behavior.
-- Prefer `app.utils.helpers.log_scenario` for API services; worker continues using its Django-based logging.
+- Prefer `resolve_api.utils.helpers.log_scenario` for API services; worker continues using its Django-based logging.

@@ -3,8 +3,8 @@
 import uvicorn
 from fastapi import FastAPI
 
-from app.api.api import router
-from app.core.config import settings
+from resolve_api.api.api import router
+from resolve_api.core.config import settings
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -22,4 +22,4 @@ async def on_shutdown():
 app.include_router(router)
 
 if __name__ == '__main__':
-    uvicorn.run('app.main:app', host=settings.API_HOST, port=settings.API_PORT)
+    uvicorn.run('resolve_api.main:app', host=settings.API_HOST, port=settings.API_PORT)

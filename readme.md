@@ -7,7 +7,7 @@ Project structure and commands
   - `celery -A worker.celery worker -l info -Q scenarios -P solo -n scenario@%h`
 
 - FastAPI service:
-  - Entry: `app/main.py`
-  - Run: `uvicorn app.main:app --host 0.0.0.0 --port 8080`
+  - Entry: `resolve_api/main.py`
+  - Run: `uvicorn resolve_api.main:app --host 0.0.0.0 --port 8080`
 
 See `docs/STRUCTURE.md` for a high-level layout and responsibilities.

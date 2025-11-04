@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import urllib.parse
 
-from app.core.config import settings
+from resolve_api.core.config import settings
 
 
 def build_mssql_uri() -> str:

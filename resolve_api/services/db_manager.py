@@ -1,7 +1,7 @@
-from app.utils.utils import handle_large_values
-from app.utils.helpers import log_scenario
-from app.core.db_config import Session
-from app.schemas.models import (
+from resolve_api.utils.utils import handle_large_values
+from resolve_api.utils.helpers import log_scenario
+from resolve_api.core.db_config import Session
+from resolve_api.schemas.models import (
     MainClass,
     ObjectInstance,
     ObjectTypeProperty,

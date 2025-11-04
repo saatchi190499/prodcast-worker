@@ -4,9 +4,9 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.schemas.api import GapResults
-from app.services.db_manager import delete_results_from_db, save_gap_results, update_scenario_status
-from app.utils.helpers import log_scenario  # ⬅️ лог пишем напрямую в БД
+from resolve_api.schemas.api import GapResults
+from resolve_api.services.db_manager import delete_results_from_db, save_gap_results, update_scenario_status
+from resolve_api.utils.helpers import log_scenario  # ⬅️ лог пишем напрямую в БД
 
 router = APIRouter()
 
