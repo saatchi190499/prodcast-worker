@@ -1,5 +1,4 @@
 import os
-import sys
 import datetime as dt
 import csv
 import subprocess
@@ -102,10 +101,9 @@ def run_python_file(path: str, timeout: int = 3600):
 
     # Inject import header if missing
     if "from petex_client import" not in code and "import petex_client" not in code:
-        # Ensure Python can import the bundled package at worker/petex_client
-        worker_dir = os.path.abspath(os.path.dirname(__file__))
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         header = (
-            f"import sys, os; sys.path.insert(0, r'{worker_dir}')\n"
+            f"import sys, os; sys.path.insert(0, r'{base_dir}')\n"
             f"from petex_client import gap, gap_tools\n"
             f"from petex_client.utils import get_srv\n"
             f"srv = get_srv()\n"
@@ -122,8 +120,8 @@ def run_python_file(path: str, timeout: int = 3600):
             f.write(code)
         path = temp_path
 
-    # Run Python file from worker dir (so imports of petex_client work)
-    project_root = os.path.abspath(os.path.dirname(__file__))
+    # Run Python file from project root (so imports work)
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
     proc = subprocess.run(
         ["python", path],
@@ -131,7 +129,7 @@ def run_python_file(path: str, timeout: int = 3600):
         stderr=subprocess.PIPE,
         text=True,
         timeout=timeout,
-        cwd=project_root,  # ensures imports from petex_client work
+        cwd=project_root,  # 👈 ensures imports from petex_client work
     )
 
     return proc.returncode, proc.stdout, proc.stderr
@@ -479,8 +477,8 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                 )
 
                 # Lazy imports to avoid COM init at module import time
-                from worker.petex_client.utils import get_srv
-                from worker.petex_client import resolve as rslv
+                from petex_client.utils import get_srv
+                from petex_client import resolve as rslv
 
                 # Prepare extraction directory
                 archive_file = str(model_path)
