@@ -33,6 +33,7 @@ from worker.helpers import (
     excel_serial_date,
     convert_value_and_unit,
     download_component_file_to,
+    normalize_ddmmyyyy
 )
 
 # =========================
@@ -213,7 +214,26 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
         # Do not fail the run if cleanup is not possible
         pass
 
-    log_scenario(scenario, f"Task {task_id} STARTED. Range: {start_date} → {end_date}", 0)
+    # Normalize input dates to strict dd/mm/yyyy as required
+    try:
+        start_date_norm = normalize_ddmmyyyy(start_date)
+        end_date_norm = normalize_ddmmyyyy(end_date)
+    except ValueError as e:
+        # Fail early with clear message
+        log_scenario(
+            scenario,
+            f"Task {task_id} ERROR. {e}",
+            0,
+        )
+        scenario.status = "ERROR"
+        scenario.save(update_fields=["status"])
+        return {"status": "ERROR", "msg": str(e)}
+
+    log_scenario(
+        scenario,
+        f"Task {task_id} STARTED. Range: {start_date_norm} → {end_date_norm}",
+        0,
+    )
 
     try:
         event_id, model_id, csv_path, model_path = generate_events_csv_for_scenario(scenario_id)
@@ -265,7 +285,8 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
 
                     rslv.set_scenario_id(srv, scenario.scenario_id)
 
-                    rslv.set_schedule(srv, start_date, end_date)
+                    # Pass normalized dd/mm/yyyy values to Resolve
+                    rslv.set_schedule(srv, start_date_norm, end_date_norm)
 
                     log_scenario(scenario, f"Running Resolve scenario: {scenario.scenario_name}", 70)
 

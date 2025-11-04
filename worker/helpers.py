@@ -101,6 +101,24 @@ def ensure_scenario_media_dir(scenario_id: int) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
+def normalize_ddmmyyyy(date_str: str) -> str:
+    """Validate and normalize a date string in dd/mm/yyyy format.
+
+    Returns the date as zero-padded dd/mm/yyyy (e.g., '01/11/2025').
+    Raises ValueError if the format is invalid.
+    """
+    if date_str is None:
+        return ""
+    s = str(date_str).strip()
+    if not s:
+        return ""
+    try:
+        return dt.datetime.strptime(s, "%d/%m/%Y").strftime("%d/%m/%Y")
+    except Exception as e:
+        raise ValueError(
+            f"Invalid date '{date_str}'. Expected dd/mm/yyyy (e.g., 01/11/2025)."
+        ) from e
+
 
 def log_scenario(scenario: int, message: str, progress: int | None = None) -> None:
     """Create a ScenarioLog entry; ignore failures to keep flow safe."""
