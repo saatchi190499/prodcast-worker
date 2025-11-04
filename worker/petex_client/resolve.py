@@ -28,15 +28,18 @@ def create_archive(srv: PetexServer, archivefile: str, force: int = 0) -> None:
     """
     srv.do_cmd(f"Resolve.CREATEARCHIVE('{archivefile}', {force})")
 
-def is_error(srv: PetexServer) -> int:
-    """Check if resolve run has an error"""
-    srv.get_value("Resolve.IsError")
+def is_error(srv: PetexServer) -> bool:
+    """Return True if Resolve reports an error after last action."""
+    val = srv.get_value("Resolve.IsError")
+    try:
+        return int(str(val).strip() or "0") != 0
+    except Exception:
+        return bool(val)
 
 def error_msg(srv: PetexServer) -> str:
-    """Show error message"""
-    srv.get_value("Resolve.ErrorMessage")
+    """Return Resolve error message string (may be empty)."""
+    return srv.get_value("Resolve.ErrorMessage")
 
 def shutdown(srv: PetexServer) -> None:
     """Shutdown the Resolve application."""
     srv.do_cmd("Resolve.SHUTDOWN()")
-

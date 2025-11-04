@@ -525,6 +525,33 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
 
                     rslv.run_scenario(srv, "Scenario1")
 
+                    # Check Resolve error state right after run
+                    try:
+                        if rslv.is_error(srv):
+                            msg = rslv.error_msg(srv) or "(no message)"
+                            rc = 1
+                            ScenarioLog.objects.create(
+                                scenario=scenario,
+                                timestamp=timezone.now(),
+                                message=f"Resolve error: {msg}",
+                                progress=85,
+                            )
+                        else:
+                            ScenarioLog.objects.create(
+                                scenario=scenario,
+                                timestamp=timezone.now(),
+                                message="Resolve reports no errors",
+                                progress=88,
+                            )
+                    except Exception as e:
+                        # If querying error state fails, log but continue to shutdown
+                        ScenarioLog.objects.create(
+                            scenario=scenario,
+                            timestamp=timezone.now(),
+                            message=f"Failed to query Resolve error state: {e}",
+                            progress=88,
+                        )
+
                     ScenarioLog.objects.create(
                         scenario=scenario,
                         timestamp=timezone.now(),
