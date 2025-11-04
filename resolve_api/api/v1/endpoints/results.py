@@ -32,7 +32,7 @@ async def retrieve_gap_results(data: GapResults):
             str_gap_pcontrol=data.str_gap_pcontrol,
         )
         update_scenario_status(sid, data.timestep)
-        log_scenario(sid, f"GAP results saved: timestep={data.timestep}")
+        log_scenario(sid, f"GAP results saved at {data.timestep}")
         return JSONResponse({"ok": True})
     except Exception as e:
         log_scenario(sid, f"Failed to save GAP results: {e}")

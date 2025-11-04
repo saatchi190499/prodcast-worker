@@ -9,5 +9,6 @@ Project structure and commands
 - FastAPI service:
   - Entry: `resolve_api/main.py`
   - Run: `uvicorn resolve_api.main:app --host 0.0.0.0 --port 8080`
+  - Run2: `python -m resolve_api.main`
 
 See `docs/STRUCTURE.md` for a high-level layout and responsibilities.

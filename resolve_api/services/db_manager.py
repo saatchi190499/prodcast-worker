@@ -96,8 +96,6 @@ def save_gap_results(
 
         sc_id = int(scenario_id)
         component_id = None  # write by scenario only
-        log_scenario(sc_id, f"[GAP] Processing timestep={timestep}")
-
         # маппинги из БД
         instance_mapping, property_mapping = get_mappings(session)
         
