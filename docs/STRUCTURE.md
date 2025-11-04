@@ -4,7 +4,7 @@ Project Layout
   - `resolve_api/main.py` — FastAPI entrypoint
   - `resolve_api/api/` — API routers and endpoints
     - `resolve_api/api/api.py` — Root router
-    - `resolve_api/api/v1/endpoints/` — Versioned endpoints (e.g., `results.py`)
+    - `resolve_api/api/results.py` — Results endpoints
   - `resolve_api/core/` — Settings and DB engine
     - `resolve_api/core/config.py` — Pydantic settings from `.env`
     - `resolve_api/core/db_config.py` — SQLAlchemy engine/session factory

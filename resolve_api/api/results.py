@@ -1,7 +1,6 @@
-# src/api/v1/endpoints/results.py
-"""Endpoints for Resolve results"""
-
+"""Results endpoints (moved from v1/endpoints)."""
 from fastapi import APIRouter, HTTPException
+import re
 from fastapi.responses import JSONResponse
 
 from resolve_api.schemas.api import GapResults
@@ -13,7 +12,32 @@ router = APIRouter()
 @router.post("/gap_results")
 async def retrieve_gap_results(data: GapResults):
     sid = data.scenario_id
-    log_scenario(sid, f"Incoming GAP results: timestep={data.timestep}")
+
+    # Derive progress from current_timestep (e.g., "timestep_0") and total timesteps
+    def _parse_index(s: str) -> int:
+        try:
+            # Prefer suffix digits; fallback to split by underscore
+            m = re.search(r"(\d+)$", s or "")
+            if m:
+                return int(m.group(1))
+            parts = (s or "").split("_")
+            return int(parts[-1]) if parts and parts[-1].isdigit() else 0
+        except Exception:
+            return 0
+
+    total = int(getattr(data, "count_timsteps", 0) or 0)
+    idx = _parse_index(getattr(data, "current_timestep", ""))
+    if total > 0:
+        ratio = (idx + 1) / total
+        progress = int(round(ratio * 100))
+        if progress < 0:
+            progress = 0
+        if progress > 100:
+            progress = 100
+    else:
+        progress = 0
+
+    log_scenario(sid, f"Incoming GAP results: timestep={data.timestep}", progress=progress)
     try:
         # ⬇️ в БД исходный scenario_id
         save_gap_results(
@@ -32,7 +56,7 @@ async def retrieve_gap_results(data: GapResults):
             str_gap_pcontrol=data.str_gap_pcontrol,
         )
         update_scenario_status(sid, data.timestep)
-        log_scenario(sid, f"GAP results saved at {data.timestep}")
+        log_scenario(sid, f"GAP results saved at {data.timestep}", progress=progress)
         return JSONResponse({"ok": True})
     except Exception as e:
         log_scenario(sid, f"Failed to save GAP results: {e}")
