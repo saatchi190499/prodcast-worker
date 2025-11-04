@@ -482,7 +482,7 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
 
                 # Prepare extraction directory
                 archive_file = str(model_path)
-                extract_dir = Path(csv_path).parent / "extracted"
+                extract_dir = Path(csv_path).parent
                 extract_dir.mkdir(parents=True, exist_ok=True)
 
                 srv = None
@@ -499,22 +499,22 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                     rslv.extract_archive(srv, archive_file, str(extract_dir))
 
                     # Find a .rsz file in the extracted content
-                    rsz_file: str | None = None
-                    for p in extract_dir.rglob("*.rsz"):
-                        rsz_file = str(p)
+                    rsl_file: str | None = None
+                    for p in extract_dir.rglob("*.rsl"):
+                        rsl_file = str(p)
                         break
 
-                    if not rsz_file:
-                        raise RuntimeError(f"No .rsz file found after extracting {archive_file} to {extract_dir}")
+                    if not rsl_file:
+                        raise RuntimeError(f"No .rsl file found after extracting {archive_file} to {extract_dir}")
 
                     ScenarioLog.objects.create(
                         scenario=scenario,
                         timestamp=timezone.now(),
-                        message=f"Opening Resolve file: {rsz_file}",
+                        message=f"Opening Resolve file: {rsl_file}",
                         progress=55,
                     )
 
-                    rslv.open_file(srv, rsz_file)
+                    rslv.open_file(srv, rsl_file)
 
                     ScenarioLog.objects.create(
                         scenario=scenario,
@@ -523,7 +523,7 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                         progress=70,
                     )
 
-                    rslv.run_scenario(srv, scenario.scenario_name)
+                    rslv.run_scenario(srv, "Scenario1")
 
                     ScenarioLog.objects.create(
                         scenario=scenario,

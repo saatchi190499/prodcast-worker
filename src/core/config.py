@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Database
     DB_DRIVER: str = os.getenv('DB_DRIVER', 'ODBC Driver 17 for SQL Server')
     DB_SERVER: str = os.getenv('DB_SERVER', 'KPCDBS14\\CYRGEN')
-    DB_NAME: str = os.getenv('DB_NAME', 'DOFTest2')
+    DB_NAME: str = os.getenv('DB_NAME', 'DOFGI1')
     DB_TRUSTED: bool = os.getenv('DB_TRUSTED', 'True').lower() == 'true'
     DB_ENCRYPT: bool = os.getenv('DB_ENCRYPT', 'False').lower() == 'true'
     DB_TRUST_SERVER_CERT: bool = os.getenv('DB_TRUST_SERVER_CERT', 'True').lower() == 'true'
