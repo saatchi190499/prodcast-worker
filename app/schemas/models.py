@@ -107,3 +107,4 @@ class ScenarioLog(Base):
     timestamp = Column(DateTime(timezone=True))
     message = Column(Text)
     progress = Column(Integer)
+

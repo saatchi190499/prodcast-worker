@@ -1,10 +1,11 @@
-from utils.utils import handle_large_values
-from utils.helpers import log_scenario
-from core.db_config import Session
-from schemas.models import (
+from app.utils.utils import handle_large_values
+from app.utils.helpers import log_scenario
+from app.core.db_config import Session
+from app.schemas.models import (
     MainClass,
     ObjectInstance,
     ObjectTypeProperty,
+    ScenarioClass,
 )
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
@@ -44,15 +45,15 @@ def get_mappings(session):
 
 
 def delete_results_from_db(scenario_id: int):
-    """Delete previous results for scenario only (by sc_id)."""
+    """Delete previous results for the given scenario."""
     session = Session()
     try:
         sc_id = int(scenario_id)
         num_deleted = session.query(MainClass).filter(MainClass.scenario_id == sc_id).delete()
         session.commit()
-        log_scenario(sc_id, f"{num_deleted} entries deleted from the database (scenario={sc_id}).")
+        log_scenario(sc_id, f"{num_deleted} entries deleted from the database")
     except Exception:
-        log_scenario(scenario_id, "An error occurred while deleting from the database")
+        log_scenario(scenario_id, "Error while deleting previous results")
         session.rollback()
     finally:
         session.close()
@@ -95,7 +96,7 @@ def save_gap_results(
 
         sc_id = int(scenario_id)
         component_id = None  # write by scenario only
-        log_scenario(sc_id, f'[GAP] scenario={sc_id} timestep={timestep}')
+        log_scenario(sc_id, f"[GAP] Processing timestep={timestep}")
 
         # маппинги из БД
         instance_mapping, property_mapping = get_mappings(session)
@@ -156,12 +157,14 @@ def save_gap_results(
         if any(l != min_len for l in lengths if l):  # только если что-то отличается
             log_scenario(
                 sc_id,
-                f'[GAP] length mismatch: wells={len(well_list)}, '
-                f"gor={len(series_map['str_gap_gor'])}, gas={len(series_map['str_gap_gas_rate'])}, "
-                f"oil={len(series_map['str_gap_oil_rate'])}, dd={len(series_map['str_gap_drawdown'])}, "
-                f"pres={len(series_map['str_gap_pres'])}, wc={len(series_map['str_gap_wc'])}, "
-                f"fwhp={len(series_map['str_gap_fwhp'])}, pctl={len(series_map['str_gap_pcontrol'])}. "
-                f'Will truncate to {min_len}.'
+                (
+                    f"[GAP] length mismatch: wells={len(well_list)}, "
+                    f"gor={len(series_map['str_gap_gor'])}, gas={len(series_map['str_gap_gas_rate'])}, "
+                    f"oil={len(series_map['str_gap_oil_rate'])}, dd={len(series_map['str_gap_drawdown'])}, "
+                    f"pres={len(series_map['str_gap_pres'])}, wc={len(series_map['str_gap_wc'])}, "
+                    f"fwhp={len(series_map['str_gap_fwhp'])}, pctl={len(series_map['str_gap_pcontrol'])}. "
+                    f"Truncating to {min_len}."
+                )
             )
 
         # обрежем всё к min_len
@@ -206,16 +209,35 @@ def save_gap_results(
                 )
 
         if not entries:
-            log_scenario(sc_id, '[GAP] nothing to save: empty entries set')
+            log_scenario(sc_id, "[GAP] Nothing to save: empty entries set")
             return
 
         session.bulk_save_objects(entries)
         session.commit()
-        log_scenario(sc_id, f'[GAP] saved {len(entries)} entries to database.')
+        log_scenario(sc_id, f"[GAP] Saved {len(entries)} entries to database")
 
     except Exception:
-        log_scenario(scenario_id, 'Error while saving GAP results')
+        log_scenario(scenario_id, "Error while saving GAP results")
         session.rollback()
         raise
+    finally:
+        session.close()
+
+
+def update_scenario_status(scenario_id: int, status: str) -> None:
+    """Update ScenarioClass.status to the provided value (e.g., timestep)."""
+    session = Session()
+    try:
+        sc_id = int(scenario_id)
+        scenario = session.query(ScenarioClass).filter(ScenarioClass.scenario_id == sc_id).first()
+        if not scenario:
+            log_scenario(sc_id, "Scenario not found to update status")
+            return
+        scenario.status = status
+        session.commit()
+        log_scenario(sc_id, "Scenario status updated")
+    except Exception:
+        session.rollback()
+        log_scenario(scenario_id, "Error while updating scenario status")
     finally:
         session.close()

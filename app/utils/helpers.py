@@ -2,8 +2,8 @@
 
 from datetime import datetime, timezone
 
-from core.db_config import Session
-from schemas.models import ScenarioLog as SA_ScenarioLog
+from app.core.db_config import Session
+from app.schemas.models import ScenarioLog as SA_ScenarioLog
 
 
 def log_scenario(scenario_id: int, message: str, progress: int | None = 0, ts: datetime | None = None) -> None:

@@ -4,16 +4,16 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from schemas.api import GapResults
-from services.db_manager import delete_results_from_db, save_gap_results
-from utils.helpers import log_scenario  # ⬅️ лог пишем напрямую в БД
+from app.schemas.api import GapResults
+from app.services.db_manager import delete_results_from_db, save_gap_results, update_scenario_status
+from app.utils.helpers import log_scenario  # ⬅️ лог пишем напрямую в БД
 
 router = APIRouter()
 
 @router.post("/gap_results")
 async def retrieve_gap_results(data: GapResults):
     sid = data.scenario_id
-    log_scenario(sid, f"Incoming /gap_results: scenario_id={sid}, timestep={data.timestep}")
+    log_scenario(sid, f"Incoming GAP results: timestep={data.timestep}")
     try:
         # ⬇️ в БД исходный scenario_id
         save_gap_results(
@@ -31,7 +31,8 @@ async def retrieve_gap_results(data: GapResults):
             str_gap_fwhp=data.str_gap_fwhp,
             str_gap_pcontrol=data.str_gap_pcontrol,
         )
-        log_scenario(sid, f"GAP saved OK: scenario_id={sid}, timestep={data.timestep}")
+        update_scenario_status(sid, data.timestep)
+        log_scenario(sid, f"GAP results saved: timestep={data.timestep}")
         return JSONResponse({"ok": True})
     except Exception as e:
         log_scenario(sid, f"Failed to save GAP results: {e}")
@@ -42,13 +43,13 @@ async def retrieve_gap_results(data: GapResults):
 
 @router.delete("/delete_gap_results")
 async def delete_gap_results(scenario_id: int):
-    log_scenario(scenario_id, f"Delete GA requested: scenario_id={scenario_id}")
+    log_scenario(scenario_id, "Delete GAP results requested")
     try:
         delete_results_from_db(scenario_id)
-        log_scenario(scenario_id, f"Delete GA OK: scenario_id={scenario_id}")
+        log_scenario(scenario_id, "GAP results deleted")
         return JSONResponse({"ok": True})
     except Exception as e:
-        log_scenario(scenario_id, f"Delete GA failed: {e}")
+        log_scenario(scenario_id, f"Delete GAP results failed: {e}")
         raise HTTPException(status_code=500, detail=f"Delete GA failed: {e}")
     finally:
         pass

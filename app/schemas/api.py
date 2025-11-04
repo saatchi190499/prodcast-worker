@@ -18,3 +18,4 @@ class GapResults(BaseModel):
     str_gap_wc: str
     str_gap_fwhp: str
     str_gap_pcontrol: str
+
