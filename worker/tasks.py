@@ -464,9 +464,93 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
             ),
             progress=25,
         )
-        
-        # Actual scenario logic placeholder
+
+        # If a model archive (.rsa) was downloaded, use Petex Resolve to extract, open and run
         rc = 0
+        if model_path:
+            try:
+                ScenarioLog.objects.create(
+                    scenario=scenario,
+                    timestamp=timezone.now(),
+                    message="Starting Resolve automation: extract archive, open file, run scenario",
+                    progress=35,
+                )
+
+                # Lazy imports to avoid COM init at module import time
+                from petex_client.utils import get_srv
+                from petex_client import resolve as rslv
+
+                # Prepare extraction directory
+                archive_file = str(model_path)
+                extract_dir = Path(csv_path).parent / "extracted"
+                extract_dir.mkdir(parents=True, exist_ok=True)
+
+                srv = None
+                try:
+                    srv = get_srv()
+                    # Start Resolve if needed
+                    try:
+                        rslv.start(srv)
+                    except Exception:
+                        # continue if already started
+                        pass
+
+                    # Extract the archive to the scenario media folder/extracted
+                    rslv.extract_archive(srv, archive_file, str(extract_dir))
+
+                    # Find a .rsz file in the extracted content
+                    rsz_file: str | None = None
+                    for p in extract_dir.rglob("*.rsz"):
+                        rsz_file = str(p)
+                        break
+
+                    if not rsz_file:
+                        raise RuntimeError(f"No .rsz file found after extracting {archive_file} to {extract_dir}")
+
+                    ScenarioLog.objects.create(
+                        scenario=scenario,
+                        timestamp=timezone.now(),
+                        message=f"Opening Resolve file: {rsz_file}",
+                        progress=55,
+                    )
+
+                    rslv.open_file(srv, rsz_file)
+
+                    ScenarioLog.objects.create(
+                        scenario=scenario,
+                        timestamp=timezone.now(),
+                        message=f"Running Resolve scenario: {scenario.scenario_name}",
+                        progress=70,
+                    )
+
+                    rslv.run_scenario(srv, scenario.scenario_name)
+
+                    ScenarioLog.objects.create(
+                        scenario=scenario,
+                        timestamp=timezone.now(),
+                        message="Resolve scenario completed",
+                        progress=90,
+                    )
+
+                    # Shutdown Resolve gracefully
+                    try:
+                        rslv.shutdown(srv)
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        if srv is not None:
+                            srv.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                rc = 1
+                ScenarioLog.objects.create(
+                    scenario=scenario,
+                    timestamp=timezone.now(),
+                    message=f"Resolve automation failed: {e}",
+                    progress=40,
+                )
 
         ScenarioLog.objects.create(
             scenario=scenario,
