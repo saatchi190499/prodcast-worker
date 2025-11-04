@@ -1,11 +1,9 @@
 import os
-import datetime as dt
 import csv
 from pathlib import Path
 
 from celery import shared_task, current_task
 from django.utils import timezone
-
 from dotenv import load_dotenv
 from worker.db import setup_django
 
@@ -22,7 +20,6 @@ from worker.models import (
     MainClass,
     ScenarioLog,
 )
-import requests
 
 from worker.helpers import (
     build_unit_mapping,
@@ -207,6 +204,10 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
     scenario = ScenarioClass.objects.get(pk=scenario_id)
     task_id = current_task.request.id
 
+
+
+    scenario.start_date, scenario.end_date, scenario.status = timezone.now(), None, "STARTED" 
+    scenario.save(update_fields=["start_date", "start_date", "status"])
     # Clean previous logs for this scenario at the start of each run
     try:
         ScenarioLog.objects.filter(scenario_id=scenario_id).delete()
@@ -246,7 +247,7 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
         rc = 0
         if model_path:
             try:
-                log_scenario(scenario, "Starting Resolve automation: extract archive, open file, run scenario", 2)
+                log_scenario(scenario, "Starting Resolve automation: extract archive, open file, run scenario", 1)
 
                 # Lazy imports to avoid COM init at module import time
                 from worker.petex_client.utils import get_srv
@@ -279,7 +280,7 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                     if not rsl_file:
                         raise RuntimeError(f"No .rsl file found after extracting {archive_file} to {extract_dir}")
 
-                    log_scenario(scenario, f"Opening Resolve file: {rsl_file}", 55)
+                    log_scenario(scenario, f"Opening Resolve file: {rsl_file}", 2)
 
                     rslv.open_file(srv, rsl_file)
 
@@ -288,7 +289,9 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                     # Pass normalized dd/mm/yyyy values to Resolve
                     rslv.set_schedule(srv, start_date_norm, end_date_norm)
 
-                    log_scenario(scenario, f"Running Resolve scenario: {scenario.scenario_name}", 70)
+                    log_scenario(scenario, f"Set schedule: {start_date_norm} - {end_date_norm}", 3)
+
+                    log_scenario(scenario, f"Start running scenario: {scenario.scenario_name}", 4)
 
                     rslv.run_scenario(srv, "Scenario1")
 
@@ -297,14 +300,16 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                         if rslv.is_error(srv):
                             msg = rslv.error_msg(srv) or "(no message)"
                             rc = 1
-                            log_scenario(scenario, f"Resolve error: {msg}", 85)
+                            log_scenario(scenario, f"Resolve error: {msg}", 100)
                         else:
-                            log_scenario(scenario, "Resolve reports no errors", 88)
+                            log_scenario(scenario, "Resolve reports no errors", 100)
                     except Exception as e:
                         # If querying error state fails, log but continue to shutdown
-                        log_scenario(scenario, f"Failed to query Resolve error state: {e}", 88)
+                        log_scenario(scenario, f"Failed to query Resolve error state: {e}", 100)
 
-                    log_scenario(scenario, "Resolve scenario completed", 90)
+                    log_scenario(scenario, "Resolve scenario completed", 100)
+                    scenario.end_date = timezone.now()
+                    scenario.save(update_fields=["end_date"])
 
                     # Shutdown Resolve gracefully
                     try:
@@ -319,7 +324,7 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                         pass
             except Exception as e:
                 rc = 1
-                log_scenario(scenario, f"Resolve automation failed: {e}", 40)
+                log_scenario(scenario, f"Resolve automation failed: {e}", 100)
 
         ScenarioLog.objects.create(
             scenario=scenario,

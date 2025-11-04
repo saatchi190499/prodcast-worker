@@ -25,19 +25,19 @@ async def retrieve_gap_results(data: GapResults):
         except Exception:
             return 0
 
-    total = int(getattr(data, "count_timsteps", 0) or 0)
+    total = int(getattr(data, "cout_timsteps", 0) or 0) + 2
     idx = _parse_index(getattr(data, "current_timestep", ""))
     if total > 0:
-        ratio = (idx + 1) / total
+        ratio = (idx + 1) / total - 10/100
         progress = int(round(ratio * 100))
         if progress < 0:
             progress = 0
         if progress > 100:
             progress = 100
     else:
-        progress = 0
+        progress = ""
 
-    log_scenario(sid, f"Incoming GAP results: timestep={data.timestep}", progress=progress)
+    log_scenario(sid, f"Incoming GAP results at {data.timestep}", progress=progress)
     try:
         # ⬇️ в БД исходный scenario_id
         save_gap_results(
@@ -55,7 +55,7 @@ async def retrieve_gap_results(data: GapResults):
             str_gap_fwhp=data.str_gap_fwhp,
             str_gap_pcontrol=data.str_gap_pcontrol,
         )
-        update_scenario_status(sid, data.timestep)
+        update_scenario_status(sid, data.timestep.split("_")[-1])
         log_scenario(sid, f"GAP results saved at {data.timestep}", progress=progress)
         return JSONResponse({"ok": True})
     except Exception as e:
