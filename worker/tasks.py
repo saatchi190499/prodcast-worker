@@ -212,36 +212,21 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
     except Exception:
         # Do not fail the run if cleanup is not possible
         pass
-    
-    ScenarioLog.objects.create(
-        scenario=scenario,
-        timestamp=timezone.now(),
-        message=f"Task {task_id} STARTED. Range: {start_date} → {end_date}",
-        progress=0,
-    )
+
+    log_scenario(scenario, f"Task {task_id} STARTED. Range: {start_date} → {end_date}", 0)
 
     try:
         event_id, model_id, csv_path, model_path = generate_events_csv_for_scenario(scenario_id)
-        ScenarioLog.objects.create(
-            scenario=scenario,
-            timestamp=timezone.now(),
-            message=(
+        log_scenario(scenario, (
                 f"Prepared {EVENTS_CSV_NAME}; event_component_id={event_id}, "
                 f"model_component_id={model_id}; path={csv_path}; model_file={model_path}"
-            ),
-            progress=25,
-        )
+            ), 0)
 
         # If a model archive (.rsa) was downloaded, use Petex Resolve to extract, open and run
         rc = 0
         if model_path:
             try:
-                ScenarioLog.objects.create(
-                    scenario=scenario,
-                    timestamp=timezone.now(),
-                    message="Starting Resolve automation: extract archive, open file, run scenario",
-                    progress=35,
-                )
+                log_scenario(scenario, "Starting Resolve automation: extract archive, open file, run scenario", 2)
 
                 # Lazy imports to avoid COM init at module import time
                 from worker.petex_client.utils import get_srv
@@ -277,6 +262,10 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                     log_scenario(scenario, f"Opening Resolve file: {rsl_file}", 55)
 
                     rslv.open_file(srv, rsl_file)
+
+                    rslv.set_scenario_id(srv, scenario.scenario_id)
+
+                    rslv.set_schedule(srv, start_date, end_date)
 
                     log_scenario(scenario, f"Running Resolve scenario: {scenario.scenario_name}", 70)
 

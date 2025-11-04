@@ -28,6 +28,13 @@ def create_archive(srv: PetexServer, archivefile: str, force: int = 0) -> None:
     """
     srv.do_cmd(f"Resolve.CREATEARCHIVE('{archivefile}', {force})")
 
+def set_scenario_id(srv: PetexServer, scenario_id):
+    srv.set_value("Resolve.DataObject[{Scenario_id}].Table[{id_scenario}].Data[0]", scenario_id)
+
+def set_schedule(srv: PetexServer, start, end):
+    srv.set_value('Resolve.Schedule.StartDate', start)
+    srv.set_value('Resolve.ScheduleList[0].EndDate', end)
+
 def is_error(srv: PetexServer) -> bool:
     """Return True if Resolve reports an error after last action."""
     val = srv.get_value("Resolve.IsError")
