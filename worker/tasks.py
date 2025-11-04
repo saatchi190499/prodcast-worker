@@ -477,8 +477,8 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                 )
 
                 # Lazy imports to avoid COM init at module import time
-                from petex_client.utils import get_srv
-                from petex_client import resolve as rslv
+                from worker.petex_client.utils import get_srv
+                from worker.petex_client import resolve as rslv
 
                 # Prepare extraction directory
                 archive_file = str(model_path)
