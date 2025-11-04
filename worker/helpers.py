@@ -102,11 +102,11 @@ def ensure_scenario_media_dir(scenario_id: int) -> Path:
     return path
 
 
-def log_scenario(scenario_id: int, message: str, progress: int | None = None) -> None:
+def log_scenario(scenario: int, message: str, progress: int | None = None) -> None:
     """Create a ScenarioLog entry; ignore failures to keep flow safe."""
     try:
         ScenarioLog.objects.create(
-            scenario_id=scenario_id,
+            scenario=scenario,
             timestamp=timezone.now(),
             message=message,
             progress=progress or 0,

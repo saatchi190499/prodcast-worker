@@ -8,7 +8,6 @@ from schemas.models import (
     ScenarioClass,
 )
 from typing import Dict, List, Tuple, Optional
-from .scenario_status import set_scenario_status
 from datetime import datetime
 
 def create_entry(

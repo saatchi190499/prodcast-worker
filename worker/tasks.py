@@ -206,6 +206,13 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
     scenario = ScenarioClass.objects.get(pk=scenario_id)
     task_id = current_task.request.id
 
+    # Clean previous logs for this scenario at the start of each run
+    try:
+        ScenarioLog.objects.filter(scenario_id=scenario_id).delete()
+    except Exception:
+        # Do not fail the run if cleanup is not possible
+        pass
+    
     ScenarioLog.objects.create(
         scenario=scenario,
         timestamp=timezone.now(),
@@ -267,11 +274,11 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                     if not rsl_file:
                         raise RuntimeError(f"No .rsl file found after extracting {archive_file} to {extract_dir}")
 
-                    log_scenario(scenario.id, f"Opening Resolve file: {rsl_file}", 55)
+                    log_scenario(scenario, f"Opening Resolve file: {rsl_file}", 55)
 
                     rslv.open_file(srv, rsl_file)
 
-                    log_scenario(scenario.id, f"Running Resolve scenario: {scenario.scenario_name}", 70)
+                    log_scenario(scenario, f"Running Resolve scenario: {scenario.scenario_name}", 70)
 
                     rslv.run_scenario(srv, "Scenario1")
 
@@ -280,14 +287,14 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                         if rslv.is_error(srv):
                             msg = rslv.error_msg(srv) or "(no message)"
                             rc = 1
-                            log_scenario(scenario.id, f"Resolve error: {msg}", 85)
+                            log_scenario(scenario, f"Resolve error: {msg}", 85)
                         else:
-                            log_scenario(scenario.id, "Resolve reports no errors", 88)
+                            log_scenario(scenario, "Resolve reports no errors", 88)
                     except Exception as e:
                         # If querying error state fails, log but continue to shutdown
-                        log_scenario(scenario.id, f"Failed to query Resolve error state: {e}", 88)
+                        log_scenario(scenario, f"Failed to query Resolve error state: {e}", 88)
 
-                    log_scenario(scenario.id, "Resolve scenario completed", 90)
+                    log_scenario(scenario, "Resolve scenario completed", 90)
 
                     # Shutdown Resolve gracefully
                     try:
@@ -302,7 +309,7 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
                         pass
             except Exception as e:
                 rc = 1
-                log_scenario(scenario.id, f"Resolve automation failed: {e}", 40)
+                log_scenario(scenario, f"Resolve automation failed: {e}", 40)
 
         ScenarioLog.objects.create(
             scenario=scenario,
