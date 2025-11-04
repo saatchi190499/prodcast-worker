@@ -1,6 +1,6 @@
 from typing import Iterable, List, Sequence, Tuple
 import numpy as np
-from petex_client.server import PetexServer
+from .server import PetexServer
 
 
 # 🔹 Global singleton for COM session
