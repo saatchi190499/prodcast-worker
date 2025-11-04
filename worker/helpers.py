@@ -102,22 +102,54 @@ def ensure_scenario_media_dir(scenario_id: int) -> Path:
     return path
 
 def normalize_ddmmyyyy(date_str: str) -> str:
-    """Validate and normalize a date string in dd/mm/yyyy format.
+    """Normalize various input date formats to dd/mm/yyyy.
 
-    Returns the date as zero-padded dd/mm/yyyy (e.g., '01/11/2025').
-    Raises ValueError if the format is invalid.
+    Accepts:
+    - dd/mm/yyyy (e.g., 01/11/2025)
+    - ISO date/time strings like 2025-11-01, 2025-11-01T13:53, 2025-11-01T13:53:00, with optional 'Z' or offset
+
+    Returns the date as dd/mm/yyyy. Raises ValueError if parsing fails.
     """
     if date_str is None:
         return ""
     s = str(date_str).strip()
     if not s:
         return ""
+
+    # Fast path: dd/mm/yyyy
     try:
         return dt.datetime.strptime(s, "%d/%m/%Y").strftime("%d/%m/%Y")
-    except Exception as e:
-        raise ValueError(
-            f"Invalid date '{date_str}'. Expected dd/mm/yyyy (e.g., 01/11/2025)."
-        ) from e
+    except Exception:
+        pass
+
+    # Handle trailing 'Z'
+    s_clean = s[:-1] if s.endswith("Z") else s
+
+    # Try Python's ISO parser
+    try:
+        iso_dt = dt.datetime.fromisoformat(s_clean)
+        return iso_dt.strftime("%d/%m/%Y")
+    except Exception:
+        pass
+
+    # Try common variants
+    fmts = [
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    ]
+    for fmt in fmts:
+        try:
+            d = dt.datetime.strptime(s_clean, fmt)
+            return d.strftime("%d/%m/%Y")
+        except Exception:
+            continue
+
+    raise ValueError(
+        f"Invalid date '{date_str}'. Expected dd/mm/yyyy or ISO like 2025-11-01T13:53."
+    )
 
 
 def log_scenario(scenario: int, message: str, progress: int | None = None) -> None:
@@ -268,4 +300,3 @@ def download_component_file_to(
         else:
             log_scenario(scenario_id, f"Failed to download model file from {full_url}: {e}", 22)
         return None
-
