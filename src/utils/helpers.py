@@ -1,6 +1,6 @@
 """Helper utilities for DB-backed scenario logging and small helpers."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.db_config import Session
 from schemas.models import ScenarioLog as SA_ScenarioLog
@@ -17,7 +17,7 @@ def log_scenario(scenario_id: int, message: str, progress: int | None = 0, ts: d
         session.add(
             SA_ScenarioLog(
                 scenario_id=int(scenario_id),
-                timestamp=ts or datetime.utcnow(),
+                timestamp=ts or datetime.now(timezone.utc),
                 message=message,
                 progress=int(progress or 0),
             )

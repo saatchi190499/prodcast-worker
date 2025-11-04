@@ -105,6 +105,5 @@ class ScenarioLog(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     scenario_id = Column(Integer, ForeignKey("apiapp_scenarios.scenario_id"))
     timestamp = Column(DateTime(timezone=True))
-    status = Column(String(50), nullable=True)  # optional compatibility
     message = Column(Text)
     progress = Column(Integer)
