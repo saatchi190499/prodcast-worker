@@ -6,7 +6,7 @@ from pydantic import BaseModel
 class GapResults(BaseModel):
     # values: str
     timestep: str
-    scenario_id: str
+    scenario_id: int
     wells: str
     separators: str
     current_timestep: str

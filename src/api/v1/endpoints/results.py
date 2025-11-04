@@ -6,23 +6,18 @@ from fastapi.responses import JSONResponse
 
 from schemas.api import GapResults
 from services.db_manager import delete_results_from_db, save_gap_results
-from utils.utils import get_scenario_api_logger, close_logger, sc_folder_id  # ⬅️ добавили sc_folder_id
+from utils.helpers import log_scenario  # ⬅️ лог пишем напрямую в БД
 
 router = APIRouter()
 
 @router.post("/gap_results")
 async def retrieve_gap_results(data: GapResults):
-    log_sid = sc_folder_id(data.scenario_id)
-
-    logger, handler = get_scenario_api_logger(log_sid)
-    logger.info(
-        "Incoming /gap_results: scenario_id=%s (log:%s), timestep=%s",
-        data.scenario_id, log_sid, data.timestep
-    )
+    sid = data.scenario_id
+    log_scenario(sid, f"Incoming /gap_results: scenario_id={sid}, timestep={data.timestep}")
     try:
         # ⬇️ в БД исходный scenario_id
         save_gap_results(
-            scenario_id=data.scenario_id,
+            scenario_id=sid,
             timestep=data.timestep,
             wells=data.wells,
             separators=data.separators,
@@ -36,27 +31,24 @@ async def retrieve_gap_results(data: GapResults):
             str_gap_fwhp=data.str_gap_fwhp,
             str_gap_pcontrol=data.str_gap_pcontrol,
         )
-        logger.info("GAP saved OK: scenario_id=%s, timestep=%s", data.scenario_id, data.timestep)
+        log_scenario(sid, f"GAP saved OK: scenario_id={sid}, timestep={data.timestep}")
         return JSONResponse({"ok": True})
     except Exception as e:
-        logger.exception("Failed to save GAP results: %s", e)
+        log_scenario(sid, f"Failed to save GAP results: {e}")
         raise HTTPException(status_code=500, detail=f"GAP save failed: {e}")
     finally:
-        close_logger(logger, handler)
+        pass
 
 
 @router.delete("/delete_gap_results")
 async def delete_gap_results(scenario_id: int):
-    log_sid = sc_folder_id(scenario_id)
-
-    logger, handler = get_scenario_api_logger(log_sid)
-    logger.info("Delete GA requested: scenario_id=%s (log:%s)", scenario_id, log_sid)
+    log_scenario(scenario_id, f"Delete GA requested: scenario_id={scenario_id}")
     try:
         delete_results_from_db(scenario_id)
-        logger.info("Delete GA OK: scenario_id=%s", scenario_id)
+        log_scenario(scenario_id, f"Delete GA OK: scenario_id={scenario_id}")
         return JSONResponse({"ok": True})
     except Exception as e:
-        logger.exception("Delete GA failed: %s", e)
+        log_scenario(scenario_id, f"Delete GA failed: {e}")
         raise HTTPException(status_code=500, detail=f"Delete GA failed: {e}")
     finally:
-        close_logger(logger, handler)
+        pass
