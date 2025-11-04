@@ -1,11 +1,9 @@
-from utils.utils import handle_large_values
-from core.config import logger, settings
+from utils.utils import handle_large_values, get_scenario_api_logger, close_logger
 from core.db_config import Session
 from schemas.models import (
     MainClass,
     ObjectInstance,
     ObjectTypeProperty,
-    ScenarioClass,
 )
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
@@ -55,16 +53,18 @@ def _normalize_scenario_id_to_int(sid: str) -> int:
 def delete_results_from_db(scenario_id: str):
     """Delete previous results for scenario only (by sc_id)."""
     session = Session()
+    log, h = get_scenario_api_logger(scenario_id)
     try:
         sc_id = _normalize_scenario_id_to_int(scenario_id)
         num_deleted = session.query(MainClass).filter(MainClass.scenario_id == sc_id).delete()
         session.commit()
-        logger.info("%s entries deleted from the database (scenario=%s).", num_deleted, sc_id)
+        log.info("%s entries deleted from the database (scenario=%s).", num_deleted, sc_id)
     except Exception:
-        logger.error("An error occurred while deleting from the database:", exc_info=True)
+        log.error("An error occurred while deleting from the database:", exc_info=True)
         session.rollback()
     finally:
         session.close()
+        close_logger(log, h)
 
 
 
@@ -98,13 +98,14 @@ def save_gap_results(
         str_gap_pcontrol: str
 ):
     session = Session()
+    log, h = get_scenario_api_logger(scenario_id)
     try:
         if current_timestep == 'timestep_0':
             delete_results_from_db(scenario_id)
 
         sc_id = _normalize_scenario_id_to_int(scenario_id)
         component_id = None  # write by scenario only
-        logger.info(f'[GAP] scenario={sc_id} timestep={timestep}')
+        log.info(f'[GAP] scenario={sc_id} timestep={timestep}')
 
         # маппинги из БД
         instance_mapping, property_mapping = get_mappings(session)
@@ -163,7 +164,7 @@ def save_gap_results(
         lengths = [len(well_list)] + [len(v) for v in series_map.values()]
         min_len = min(lengths) if lengths else 0
         if any(l != min_len for l in lengths if l):  # только если что-то отличается
-            logger.warning(
+            log.warning(
                 f'[GAP] length mismatch: wells={len(well_list)}, '
                 f"gor={len(series_map['str_gap_gor'])}, gas={len(series_map['str_gap_gas_rate'])}, "
                 f"oil={len(series_map['str_gap_oil_rate'])}, dd={len(series_map['str_gap_drawdown'])}, "
@@ -214,16 +215,17 @@ def save_gap_results(
                 )
 
         if not entries:
-            logger.warning('[GAP] nothing to save: empty entries set')
+            log.warning('[GAP] nothing to save: empty entries set')
             return
 
         session.bulk_save_objects(entries)
         session.commit()
-        logger.info(f'[GAP] saved {len(entries)} entries to database.')
+        log.info(f'[GAP] saved {len(entries)} entries to database.')
 
     except Exception:
-        logger.error('Error while saving GAP results', exc_info=True)
+        log.error('Error while saving GAP results', exc_info=True)
         session.rollback()
         raise
     finally:
         session.close()
+        close_logger(log, h)

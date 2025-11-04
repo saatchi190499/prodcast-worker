@@ -18,18 +18,7 @@ def handle_large_values(value):
         return 0
 
 
-def convert_input_data(
-        keys: str,
-        values: str,
-        timestep: str
-) -> dict[float | str]:
-    keys_list = keys.split('|')
-    values_list = [handle_large_values(item) for item in values.split('|')]
-    timestep_conv = timestep.split('_')[1]
-    result = {key: value for key, value in zip(keys_list, values_list)}
-    result['time'] = timestep_conv
-    
-    return result
+ 
 
 def _setup_file_logger(log_path: Path, name: str, mode: str = "a") -> tuple[logging.Logger, logging.Handler]:
     log_path.parent.mkdir(parents=True, exist_ok=True)

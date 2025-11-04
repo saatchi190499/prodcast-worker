@@ -1,9 +1,7 @@
 """Project config class"""
 
-import sys
 import os
 from pydantic_settings import BaseSettings
-from loguru import logger
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -37,4 +35,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-logger.add(sys.stderr, format='{time} {level} {message}', filter='Results from Resolve', level='INFO')
