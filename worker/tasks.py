@@ -229,9 +229,13 @@ def generate_decline_curves_csvs_for_scenario(scenario_id: int) -> tuple[int | N
         .select_related("object_type", "object_instance", "object_type_property")
         .filter(component_id=dc_component_id)
     )
+    
+    # Prepare unit conversion mapping for DECLINE CURVES (target only)
+    # Values in DB are stored in Oil Field; convert using helpers to target
+    _, unit_map_target = build_unit_mapping(TARGET_UNIT_SYSTEM_NAME)
 
-    # Build a nested mapping: {(otype, name): {prop_name: [values...]}}
-    series_map: dict[tuple[str, str], dict[str, list[str]]] = {}
+    # Build a nested mapping: {(otype, name): {prop_name: (values, template_row)}}
+    series_map: dict[tuple[str, str], dict[str, tuple[list[str], MainClass]]] = {}
     props_by_type: dict[str, set[str]] = {}
 
     for row in qs.iterator():
@@ -243,7 +247,15 @@ def generate_decline_curves_csvs_for_scenario(scenario_id: int) -> tuple[int | N
         key = (otype, name)
         series_map.setdefault(key, {})
         props_by_type.setdefault(otype, set()).add(prop)
-        series_map[key].setdefault(prop, _split_series(row.value))
+        series_map[key].setdefault(prop, (_split_series(row.value), row))
+    
+    def _convert_value_with_row(raw: str, template_row: MainClass) -> str:
+        try:
+            template_row.value = raw
+            value, _unit, _category = convert_value_and_unit(template_row, unit_map_target)
+            return value
+        except Exception:
+            return raw
 
     def write_csv(target_type: str, out_path: Path) -> str | None:
         cols = sorted(props_by_type.get(target_type, []))
@@ -259,13 +271,20 @@ def generate_decline_curves_csvs_for_scenario(scenario_id: int) -> tuple[int | N
                 # Determine max series length across selected properties
                 max_len = 0
                 for p in cols:
-                    max_len = max(max_len, len(prop_series.get(p, [])))
+                    vals_row = prop_series.get(p)
+                    vals = vals_row[0] if isinstance(vals_row, tuple) else (vals_row or [])
+                    max_len = max(max_len, len(vals))
                 # Emit rows 1..max_len
                 for i in range(max_len):
                     row_vals = [i + 1, name]
                     for p in cols:
-                        vals = prop_series.get(p, [])
-                        row_vals.append(vals[i] if i < len(vals) else "")
+                        vals_row = prop_series.get(p)
+                        if isinstance(vals_row, tuple):
+                            vals, trow = vals_row
+                        else:
+                            vals, trow = (vals_row or []), None
+                        raw = vals[i] if i < len(vals) else ""
+                        row_vals.append(_convert_value_with_row(raw, trow) if trow else raw)
                     writer.writerow(row_vals)
         return str(out_path)
 

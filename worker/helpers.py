@@ -205,7 +205,7 @@ def convert_value_and_unit(row, unit_map: dict[int, object]) -> tuple[str, str, 
             val_base = float(value)
             s = float(target_ud.scale_factor)
             o = float(target_ud.offset)
-            val_target = (val_base - o) / s if s != 0 else val_base
+            val_target = (val_base - o) * s if s != 0 else val_base
             precision = getattr(target_ud, "precision", None)
             if isinstance(precision, int) and precision >= 0:
                 value = f"{val_target:.{precision}f}"
