@@ -39,6 +39,8 @@ from worker.helpers import (
 
 DEFAULT_WORKFLOW_TIMEOUT = 7200
 EVENTS_CSV_NAME = "Events1.csv"
+DC_WELLS_CSV_NAME = "DeclineCurves_Wells.csv"
+DC_TANKS_CSV_NAME = "DeclineCurves_Tanks.csv"
 EVENTS_CSV_HEADER = [
     "Date",
     "Type",
@@ -198,6 +200,81 @@ def generate_events_csv_for_scenario(scenario_id: int) -> tuple[int | None, int 
     return event_component_id, model_component_id, str(csv_path), model_copied_path
 
 
+def _split_series(series: str) -> list[str]:
+    if not series:
+        return []
+    parts = str(series).split("|")
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    return parts
+
+
+def generate_decline_curves_csvs_for_scenario(scenario_id: int) -> tuple[int | None, str | None, str | None]:
+    """
+    Generate two CSV files for the "Decline Curves" data source:
+    - Wells CSV: Number, Name, then all WELL-related properties as columns
+    - Tanks CSV: Number, Name, then all TANK-related properties as columns
+
+    Returns: (dc_component_id, wells_csv_path or None, tanks_csv_path or None)
+    """
+    dc_component_id = get_component_id_by_source_name(scenario_id, "Decline Curves")
+    folder = ensure_scenario_media_dir(scenario_id)
+
+    if not dc_component_id:
+        # No Decline Curves component linked; nothing to generate
+        return None, None, None
+
+    qs = (
+        MainClass.objects
+        .select_related("object_type", "object_instance", "object_type_property")
+        .filter(component_id=dc_component_id)
+    )
+
+    # Build a nested mapping: {(otype, name): {prop_name: [values...]}}
+    series_map: dict[tuple[str, str], dict[str, list[str]]] = {}
+    props_by_type: dict[str, set[str]] = {}
+
+    for row in qs.iterator():
+        otype = (row.object_type.object_type_name or "").upper() if row.object_type else ""
+        name = row.object_instance.object_instance_name if row.object_instance else ""
+        prop = row.object_type_property.object_type_property_name if row.object_type_property else ""
+        if not otype or not name or not prop:
+            continue
+        key = (otype, name)
+        series_map.setdefault(key, {})
+        props_by_type.setdefault(otype, set()).add(prop)
+        series_map[key].setdefault(prop, _split_series(row.value))
+
+    def write_csv(target_type: str, out_path: Path) -> str | None:
+        cols = sorted(props_by_type.get(target_type, []))
+        if not cols:
+            return None
+        with out_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Number", "Name", *cols])
+            # Iterate over instances of this type
+            for (otype, name), prop_series in series_map.items():
+                if otype != target_type:
+                    continue
+                # Determine max series length across selected properties
+                max_len = 0
+                for p in cols:
+                    max_len = max(max_len, len(prop_series.get(p, [])))
+                # Emit rows 1..max_len
+                for i in range(max_len):
+                    row_vals = [i + 1, name]
+                    for p in cols:
+                        vals = prop_series.get(p, [])
+                        row_vals.append(vals[i] if i < len(vals) else "")
+                    writer.writerow(row_vals)
+        return str(out_path)
+
+    wells_csv = write_csv("WELL", folder / DC_WELLS_CSV_NAME)
+    tanks_csv = write_csv("TANK", folder / DC_TANKS_CSV_NAME)
+
+    return dc_component_id, wells_csv, tanks_csv
+
+
 @shared_task(name="worker.run_scenario")
 def run_scenario(scenario_id: int, start_date: str, end_date: str):
     """Run scenario job and prepare Events1.csv before execution."""
@@ -241,6 +318,14 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
         log_scenario(scenario, (
                 f"Prepared {EVENTS_CSV_NAME}; event_component_id={event_id}, "
                 f"model_component_id={model_id}; path={csv_path}; model_file={model_path}"
+            ), 0)
+
+        # Generate Decline Curves CSVs (WELL and TANK)
+        dc_component_id, wells_csv, tanks_csv = generate_decline_curves_csvs_for_scenario(scenario_id)
+        if dc_component_id:
+            log_scenario(scenario, (
+                f"Prepared Decline Curves CSVs; dc_component_id={dc_component_id}; "
+                f"wells_csv={wells_csv}; tanks_csv={tanks_csv}"
             ), 0)
 
         # If a model archive (.rsa) was downloaded, use Petex Resolve to extract, open and run
@@ -340,8 +425,11 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
             "status": scenario.status,
             "event_component_id": event_id,
             "model_component_id": model_id,
+            "dc_component_id": dc_component_id,
             "events_csv": str(csv_path),
             "model_file": model_path,
+            "dc_wells_csv": wells_csv,
+            "dc_tanks_csv": tanks_csv,
         }
 
     except Exception as e:
