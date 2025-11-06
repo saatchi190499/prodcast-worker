@@ -38,9 +38,9 @@ from worker.helpers import (
 # =========================
 
 DEFAULT_WORKFLOW_TIMEOUT = 7200
-EVENTS_CSV_NAME = "Events1.csv"
-DC_WELLS_CSV_NAME = "DeclineCurves_Wells.csv"
-DC_TANKS_CSV_NAME = "DeclineCurves_Tanks.csv"
+EVENTS_CSV_NAME = "events.csv"
+DC_WELLS_CSV_NAME = "dc_wells.csv"
+DC_TANKS_CSV_NAME = "dc_tanks.csv"
 EVENTS_CSV_HEADER = [
     "Date",
     "Type",
@@ -252,7 +252,7 @@ def generate_decline_curves_csvs_for_scenario(scenario_id: int) -> tuple[int | N
     def _convert_value_with_row(raw: str, template_row: MainClass) -> str:
         try:
             template_row.value = raw
-            value, _unit, _category = convert_value_and_unit(template_row, unit_map_target)
+            value, _unit, _category = convert_value_and_unit(template_row, unit_map_target, no_round=True)
             return value
         except Exception:
             return raw

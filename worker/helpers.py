@@ -185,7 +185,7 @@ def excel_serial_date(value) -> int:
         return 0
 
 
-def convert_value_and_unit(row, unit_map: dict[int, object]) -> tuple[str, str, str]:
+def convert_value_and_unit(row, unit_map: dict[int, object], no_round: bool = False) -> tuple[str, str, str]:
     """Convert `row.value` using unit_map; return (value, unit, category). Best-effort."""
     value = row.value or ""
     unit = ""
@@ -206,11 +206,14 @@ def convert_value_and_unit(row, unit_map: dict[int, object]) -> tuple[str, str, 
             s = float(target_ud.scale_factor)
             o = float(target_ud.offset)
             val_target = (val_base - o) * s if s != 0 else val_base
-            precision = getattr(target_ud, "precision", None)
-            if isinstance(precision, int) and precision >= 0:
-                value = f"{val_target:.{precision}f}"
-            else:
+            if no_round:
                 value = str(val_target)
+            else:
+                precision = getattr(target_ud, "precision", None)
+                if isinstance(precision, int) and precision >= 0:
+                    value = f"{val_target:.{precision}f}"
+                else:
+                    value = str(val_target)
             unit = target_ud.alias_text or target_ud.unit_definition_name or ""
         except Exception:
             unit = target_ud.alias_text or target_ud.unit_definition_name or ""
