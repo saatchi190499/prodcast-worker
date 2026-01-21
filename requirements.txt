@@ -6,3 +6,4 @@ requests
 mssql-django
 pywin32
 django-smart-selects
+numpy

@@ -20,7 +20,7 @@ def setup_django():
                 "NAME": os.getenv("POSTGRES_DB", "prodcast2"),
                 "USER": os.getenv("POSTGRES_USER", "postgres"),
                 "PASSWORD": os.getenv("POSTGRES_PASSWORD", "1"),
-                "HOST": os.getenv("POSTGRES_HOST", "192.168.1.77"),
+                "HOST": os.getenv("POSTGRES_HOST", "postgresql"),
                 "PORT": os.getenv("POSTGRES_PORT", "5432"),
             },
         },

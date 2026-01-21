@@ -1,33 +1,55 @@
-from typing import Iterable, List, Sequence, Tuple
+import os
+from typing import Iterable, List, Optional, Sequence, Tuple
 import numpy as np
-from .server import PetexServer
+from .server import PetexServer, PetexException, petex_available
 
 
 # 🔹 Global singleton for COM session
-_srv_instance = None
+_srv_instance: Optional[PetexServer] = None
 
 
-def get_srv():
+def _petex_disabled() -> bool:
+    return os.getenv("PETEX_DISABLE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_srv(allow_none: bool = True) -> Optional[PetexServer]:
     """Return a live PetexServer instance, reconnecting if necessary."""
     global _srv_instance
 
+    if _petex_disabled() or not petex_available():
+        if allow_none:
+            return None
+        raise PetexException("Petex COM is not available in this environment.")
+
     if _srv_instance is None:
         _srv_instance = PetexServer()
-        _srv_instance.__enter__()   # open COM session
+        try:
+            _srv_instance.__enter__()   # open COM session
+        except Exception:
+            _srv_instance = None
+            if allow_none:
+                return None
+            raise
     else:
         try:
-            # 🔹 Probe COM connection (cheap call)
+            # Probe COM connection (cheap call)
             if not hasattr(_srv_instance, "_server") or _srv_instance._server is None:
                 raise Exception("COM not initialized")
             _ = _srv_instance._server.GetTypeInfoCount()  # minimal COM check
         except Exception:
-            # 🔹 Reconnect if dead
+            # Reconnect if dead
             try:
                 _srv_instance.close()
             except Exception:
                 pass
             _srv_instance = PetexServer()
-            _srv_instance.__enter__()
+            try:
+                _srv_instance.__enter__()
+            except Exception:
+                _srv_instance = None
+                if allow_none:
+                    return None
+                raise
 
     return _srv_instance
 

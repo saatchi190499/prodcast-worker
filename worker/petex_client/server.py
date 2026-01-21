@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Optional, Literal, Any, Callable
 import platform
@@ -42,6 +43,7 @@ def _require_petex() -> None:
 AppName = Literal["PROSPER", "MBAL", "GAP", "PVT", "RESOLVE", "REVEAL"]
  
 _DEFAULT_PROGID = "PX32.OpenServer.1"
+_ENV_PROGID = "PETEX_PROGID"
  
  
 def _app_name_from_tag(tag: str) -> AppName:
@@ -65,15 +67,27 @@ class PetexServer:
       - async wait with timeout
     """
  
-    def __init__(self, progid: str = _DEFAULT_PROGID):
-        self._progid = progid
+    def __init__(self, progid: Optional[str] = None):
+        self._progid = progid or os.environ.get(_ENV_PROGID, _DEFAULT_PROGID)
         self._server = None
  
     # Context manager support
     def __enter__(self) -> "PetexServer":
         _require_petex()
         pythoncom.CoInitialize()
-        self._server = Dispatch(self._progid)  # type: ignore[misc]
+        try:
+            self._server = Dispatch(self._progid)  # type: ignore[misc]
+        except Exception as exc:
+            msg = str(exc)
+            if "Invalid class string" in msg or "invalid class string" in msg:
+                raise PetexException(
+                    "OpenServer COM ProgID not registered. "
+                    f"Tried '{self._progid}'. "
+                    "Install/repair PETEX OpenServer, register its COM server, "
+                    "and ensure Python bitness matches OpenServer. "
+                    f"Override via env var {_ENV_PROGID} if needed."
+                ) from exc
+            raise
         if self._server is None:
             raise PetexException("Unable to acquire COM server (license or connectivity issue)")
         return self

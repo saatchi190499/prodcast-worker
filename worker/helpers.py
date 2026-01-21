@@ -70,9 +70,9 @@ def run_python_file(path: str, timeout: int = 3600):
             f"import sys, os; sys.path.insert(0, r'{worker_dir}')\n"
             f"from petex_client import gap, gap_tools\n"
             f"from petex_client.utils import get_srv\n"
-            f"srv = get_srv()\n"
+            f"srv = get_srv(allow_none=True)\n"
         )
-        footer = "srv.close()\n"
+        footer = "if srv is not None:\n    srv.close()\n"
         code = header + "\n" + code + "\n" + footer
 
         temp_path = path + ".auto"

@@ -366,62 +366,65 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
 
                 srv = None
                 try:
-                    srv = get_srv()
-                    # Start Resolve if needed
-                    try:
-                        rslv.start(srv)
-                    except Exception:
-                        # continue if already started
-                        pass
+                    srv = get_srv(allow_none=True)
+                    if srv is None:
+                        log_scenario(scenario, "Petex COM not available; skipping Resolve automation", 10)
+                    else:
+                        # Start Resolve if needed
+                        try:
+                            rslv.start(srv)
+                        except Exception:
+                            # continue if already started
+                            pass
 
-                    # Extract the archive to the scenario media folder
-                    rslv.extract_archive(srv, archive_file, str(extract_dir))
+                        # Extract the archive to the scenario media folder
+                        rslv.extract_archive(srv, archive_file, str(extract_dir))
 
-                    # Find a .rsl file in the extracted content
-                    rsl_file: str | None = None
-                    for p in extract_dir.rglob("*.rsl"):
-                        rsl_file = str(p)
-                        break
+                        # Find a .rsl file in the extracted content
+                        rsl_file: str | None = None
+                        for p in extract_dir.rglob("*.rsl"):
+                            rsl_file = str(p)
+                            break
 
-                    if not rsl_file:
-                        raise RuntimeError(f"No .rsl file found after extracting {archive_file} to {extract_dir}")
+                        if not rsl_file:
+                            raise RuntimeError(f"No .rsl file found after extracting {archive_file} to {extract_dir}")
 
-                    log_scenario(scenario, f"Opening Resolve file: {rsl_file}", 2)
+                        log_scenario(scenario, f"Opening Resolve file: {rsl_file}", 2)
 
-                    rslv.open_file(srv, rsl_file)
+                        rslv.open_file(srv, rsl_file)
 
-                    rslv.set_scenario_id(srv, scenario.scenario_id)
+                        rslv.set_scenario_id(srv, scenario.scenario_id)
 
-                    # Pass normalized dd/mm/yyyy values to Resolve
-                    rslv.set_schedule(srv, start_date_norm, end_date_norm)
+                        # Pass normalized dd/mm/yyyy values to Resolve
+                        rslv.set_schedule(srv, start_date_norm, end_date_norm)
 
-                    log_scenario(scenario, f"Set schedule: {start_date_norm} - {end_date_norm}", 3)
+                        log_scenario(scenario, f"Set schedule: {start_date_norm} - {end_date_norm}", 3)
 
-                    log_scenario(scenario, f"Start running scenario: {scenario.scenario_name}", 4)
+                        log_scenario(scenario, f"Start running scenario: {scenario.scenario_name}", 4)
 
-                    rslv.run_scenario(srv, "Scenario1")
+                        rslv.run_scenario(srv, "Scenario1")
 
-                    # Check Resolve error state right after run
-                    try:
-                        if rslv.is_error(srv):
-                            msg = rslv.error_msg(srv) or "(no message)"
-                            rc = 1
-                            log_scenario(scenario, f"Resolve error: {msg}", 100)
-                        else:
-                            log_scenario(scenario, "Resolve reports no errors", 100)
-                    except Exception as e:
-                        # If querying error state fails, log but continue to shutdown
-                        log_scenario(scenario, f"Failed to query Resolve error state: {e}", 100)
+                        # Check Resolve error state right after run
+                        try:
+                            if rslv.is_error(srv):
+                                msg = rslv.error_msg(srv) or "(no message)"
+                                rc = 1
+                                log_scenario(scenario, f"Resolve error: {msg}", 100)
+                            else:
+                                log_scenario(scenario, "Resolve reports no errors", 100)
+                        except Exception as e:
+                            # If querying error state fails, log but continue to shutdown
+                            log_scenario(scenario, f"Failed to query Resolve error state: {e}", 100)
 
-                    log_scenario(scenario, "Resolve scenario completed", 100)
-                    scenario.end_date = timezone.now()
-                    scenario.save(update_fields=["end_date"])
+                        log_scenario(scenario, "Resolve scenario completed", 100)
+                        scenario.end_date = timezone.now()
+                        scenario.save(update_fields=["end_date"])
 
-                    # Shutdown Resolve gracefully
-                    try:
-                        rslv.shutdown(srv)
-                    except Exception:
-                        pass
+                        # Shutdown Resolve gracefully
+                        try:
+                            rslv.shutdown(srv)
+                        except Exception:
+                            pass
                 finally:
                     try:
                         if srv is not None:
