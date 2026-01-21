@@ -91,7 +91,9 @@ def run_workflow(workflow_id: int, scheduler_id: int = None):
             run.save()
             return {"status": "ERROR", "msg": "No code file"}
 
-        code_url = f"{os.getenv('DJANGO_BASE_URL')}/media/{wf.code_file.url}"
+        base_url = (os.getenv("DJANGO_BASE_URL") or "").rstrip("/")
+        code_url = f"{base_url}{wf.code_file.url}"
+        print(f"Downloading workflow code from: {code_url}")
         local_path = download_file(code_url)
 
         rc, out, err = run_python_file(local_path, timeout=DEFAULT_WORKFLOW_TIMEOUT)

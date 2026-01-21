@@ -1,0 +1,24 @@
+services:
+  worker-scenarios:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker.windows
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      CELERY_QUEUES: scenarios
+      CELERY_NAME: scenario@%h
+
+  worker-workflows:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker.windows
+    env_file:
+      - .env
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      CELERY_QUEUES: workflows
+      CELERY_NAME: workflow@%h

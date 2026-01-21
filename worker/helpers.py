@@ -63,11 +63,11 @@ def run_python_file(path: str, timeout: int = 3600):
     with open(path, "r", encoding="utf-8") as f:
         code = f.read()
 
+    worker_dir = os.path.abspath(os.path.dirname(__file__))
     # Inject import header if missing
     if "from petex_client import" not in code and "import petex_client" not in code:
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         header = (
-            f"import sys, os; sys.path.insert(0, r'{base_dir}')\n"
+            f"import sys, os; sys.path.insert(0, r'{worker_dir}')\n"
             f"from petex_client import gap, gap_tools\n"
             f"from petex_client.utils import get_srv\n"
             f"srv = get_srv()\n"
@@ -81,6 +81,8 @@ def run_python_file(path: str, timeout: int = 3600):
         path = temp_path
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{worker_dir}:{env.get('PYTHONPATH', '')}".rstrip(":")
     proc = subprocess.run(
         [sys.executable, path],
         stdout=subprocess.PIPE,
@@ -88,6 +90,7 @@ def run_python_file(path: str, timeout: int = 3600):
         text=True,
         timeout=timeout,
         cwd=project_root,
+        env=env,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -251,7 +254,7 @@ def download_component_file_to(
     url = getattr(file_field, "url", None)
     name = getattr(file_field, "name", None)
     if not url and name:
-        url = f"/media/{name}"
+        url = f"{name}"
     if not url:
         log_scenario(scenario_id, "Model component file has no url/name to build download URL", 20)
         return None

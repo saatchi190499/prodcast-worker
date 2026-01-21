@@ -1,0 +1,13 @@
+FROM python:3.13
+
+WORKDIR C:\\app
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+COPY requirements-worker-windows.txt C:\\app\\requirements-worker-windows.txt
+RUN python -m pip install --no-cache-dir -r C:\\app\\requirements-worker-windows.txt
+
+COPY worker C:\\app\\worker
+COPY entrypoint.ps1 C:\\app\\entrypoint.ps1
+
+CMD ["powershell", "-File", "C:\\\\app\\\\entrypoint.ps1"]

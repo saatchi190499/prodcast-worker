@@ -17,12 +17,12 @@ class Settings(BaseSettings):
     API_V1_STR: str = '/api/v1'
 
     # Database
-    DB_DRIVER: str = os.getenv('DB_DRIVER', 'ODBC Driver 17 for SQL Server')
-    DB_SERVER: str = os.getenv('DB_SERVER', 'KPCDBS14\\CYRGEN')
-    DB_NAME: str = os.getenv('DB_NAME', 'DOFGI1')
-    DB_TRUSTED: bool = os.getenv('DB_TRUSTED', 'True').lower() == 'true'
-    DB_ENCRYPT: bool = os.getenv('DB_ENCRYPT', 'False').lower() == 'true'
-    DB_TRUST_SERVER_CERT: bool = os.getenv('DB_TRUST_SERVER_CERT', 'True').lower() == 'true'
+    DATABASE_URL: str | None = os.getenv("DATABASE_URL")
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "prodcast2")
+    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "prodcast")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
+    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "db")
+    POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
 
     # Worker / Paths
     MODEL_DOWNLOAD_TOKEN: str | None = os.getenv('MODEL_DOWNLOAD_TOKEN')

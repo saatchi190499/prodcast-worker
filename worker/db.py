@@ -14,15 +14,14 @@ def setup_django():
     media_root = os.environ.get("MEDIA_ROOT", os.path.join(base_dir, "media"))
 
     settings.configure(
-        DATABASES = {
-            'default': {
-                'ENGINE': 'mssql',
-                'NAME': 'DOFGI1',
-                'HOST': 'KPCDBS14\\CYRGEN',
-                'OPTIONS': {
-                    'driver': 'ODBC Driver 17 for SQL Server',
-                    'trusted_connection': 'yes',
-                },
+        DATABASES={
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.getenv("POSTGRES_DB", "prodcast2"),
+                "USER": os.getenv("POSTGRES_USER", "postgres"),
+                "PASSWORD": os.getenv("POSTGRES_PASSWORD", "1"),
+                "HOST": os.getenv("POSTGRES_HOST", "192.168.1.77"),
+                "PORT": os.getenv("POSTGRES_PORT", "5432"),
             },
         },
         INSTALLED_APPS=[
