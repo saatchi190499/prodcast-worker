@@ -96,7 +96,11 @@ def run_workflow(workflow_id: int, scheduler_id: int = None):
         print(f"Downloading workflow code from: {code_url}")
         local_path = download_file(code_url)
 
-        rc, out, err = run_python_file(local_path, timeout=DEFAULT_WORKFLOW_TIMEOUT)
+        rc, out, err = run_python_file(
+            local_path,
+            timeout=DEFAULT_WORKFLOW_TIMEOUT,
+            workflow_component_id=getattr(wf, "component_id", None),
+        )
         run.finished_at = timezone.now()
         run.output = out[:5000]
         run.error = err[:5000] if rc != 0 else None

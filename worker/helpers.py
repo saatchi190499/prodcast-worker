@@ -51,7 +51,7 @@ def download_file(url: str) -> str:
     return tmp_path
 
 
-def run_python_file(path: str, timeout: int = 3600):
+def run_python_file(path: str, timeout: int = 3600, workflow_component_id: int | None = None):
     """
     Run a Python script ensuring project imports work and petex_client is available.
     Returns (returncode, stdout, stderr).
@@ -64,25 +64,170 @@ def run_python_file(path: str, timeout: int = 3600):
         code = f.read()
 
     worker_dir = os.path.abspath(os.path.dirname(__file__))
-    # Inject import header if missing
-    if "from petex_client import" not in code and "import petex_client" not in code:
-        header = (
-            f"import sys, os; sys.path.insert(0, r'{worker_dir}')\n"
-            f"from petex_client import gap, gap_tools\n"
-            f"from petex_client.utils import get_srv\n"
-            f"srv = get_srv(allow_none=True)\n"
-        )
-        footer = "if srv is not None:\n    srv.close()\n"
-        code = header + "\n" + code + "\n" + footer
-
-        temp_path = path + ".auto"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(code)
-        path = temp_path
-
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    # Inject workflow helpers into executed code
+    base_header = (
+        """import sys, os
+import importlib.abc, importlib.util
+sys.path.insert(0, r"{project_root}")
+sys.path.insert(0, r"{worker_dir}")
+MAIN_SERVER_URL = os.getenv("WORKER_MAIN_SERVER_URL")
+if not MAIN_SERVER_URL:
+    base = os.getenv("DJANGO_BASE_URL", "").rstrip("/")
+    MAIN_SERVER_URL = f"{{base}}/api" if base else "http://localhost:8000/api"
+MAIN_SERVER_MODULE_URL = f"{{MAIN_SERVER_URL}}/module"
+DISABLE_REMOTE_IMPORTS = os.getenv("WORKER_DISABLE_REMOTE_IMPORTS", "").lower() in ("1", "true", "yes")
+REMOTE_IMPORT_PREFIXES = [p.strip() for p in os.getenv("WORKER_REMOTE_IMPORT_PREFIXES", "apiapp,petex_client,pi_client").split(",") if p.strip()]
+class RemoteModuleLoader(importlib.abc.SourceLoader):
+    def __init__(self, fullname):
+        self.fullname = fullname
+    def get_data(self, path):
+        try:
+            import requests
+        except ImportError as e:
+            raise ImportError("requests is required for remote imports") from e
+        module_path = path.replace(".", "/")
+        url = f"{{MAIN_SERVER_MODULE_URL}}/{{module_path}}"
+        resp = requests.get(url, timeout=30)
+        if resp.status_code == 404 and "/" not in module_path.split("/")[-1]:
+            url = f"{{MAIN_SERVER_MODULE_URL}}/{{module_path}}/__init__.py"
+            resp = requests.get(url, timeout=30)
+        if resp.status_code != 200:
+            raise ImportError(f"Failed to fetch: {{url}} ({{resp.status_code}})")
+        return resp.text.encode("utf-8")
+    def get_filename(self, fullname):
+        return fullname
+    def is_package(self, fullname):
+        return fullname in REMOTE_IMPORT_PREFIXES
+class RemoteModuleFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        for prefix in REMOTE_IMPORT_PREFIXES:
+            if fullname == prefix or fullname.startswith(prefix + "."):
+                loader = RemoteModuleLoader(fullname)
+                return importlib.util.spec_from_loader(fullname, loader)
+        return None
+if not DISABLE_REMOTE_IMPORTS:
+    sys.meta_path.insert(0, RemoteModuleFinder())
+from worker.db import setup_django
+setup_django()
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from worker.models import MainClass, DataSourceComponent, ObjectType, ObjectInstance, ObjectTypeProperty
+from django.db import models as django_models
+class MainClassHistory(django_models.Model):
+    id = django_models.BigAutoField(primary_key=True)
+    main_record = django_models.ForeignKey(
+        MainClass, on_delete=django_models.CASCADE, related_name="history", db_index=True
+    )
+    time = django_models.DateTimeField("Time", db_index=True)
+    value = django_models.TextField(db_column="value", null=True, blank=True)
+    class Meta:
+        db_table = "apiapp_mainclass_history"
+        verbose_name = "Main Data Record History"
+        verbose_name_plural = "Main Data Record History"
+        app_label = "apiapp"
+        ordering = ["-time"]
+        indexes = [django_models.Index(fields=["main_record", "time"])]
+def _resolve_obj(model, val, name_field, id_field):
+    if val is None: return None
+    if isinstance(val, dict):
+        if val.get(id_field) is not None: return model.objects.get(pk=int(val[id_field]))
+        if val.get("id") is not None: return model.objects.get(pk=int(val["id"]))
+        if val.get(name_field): return model.objects.get(**{{name_field: val[name_field]}})
+        if val.get("name"): return model.objects.get(**{{name_field: val["name"]}})
+        return None
+    if isinstance(val, int): return model.objects.get(pk=val)
+    if isinstance(val, str): return model.objects.get(**{{name_field: val}})
+    if hasattr(val, "pk"): return model.objects.get(pk=val.pk)
+    return None
+def _resolve_property(val, obj_type=None):
+    if val is None: return None
+    if isinstance(val, dict):
+        if val.get("object_type_property_id") is not None: return ObjectTypeProperty.objects.get(pk=int(val["object_type_property_id"]))
+        if val.get("id") is not None: return ObjectTypeProperty.objects.get(pk=int(val["id"]))
+        name = val.get("object_type_property_name") or val.get("name")
+        if name and obj_type: return ObjectTypeProperty.objects.get(object_type=obj_type, object_type_property_name=name)
+        if name: return ObjectTypeProperty.objects.get(object_type_property_name=name)
+        return None
+    if isinstance(val, int): return ObjectTypeProperty.objects.get(pk=val)
+    if isinstance(val, str):
+        if obj_type: return ObjectTypeProperty.objects.get(object_type=obj_type, object_type_property_name=val)
+        return ObjectTypeProperty.objects.get(object_type_property_name=val)
+    if hasattr(val, "pk"): return ObjectTypeProperty.objects.get(pk=val.pk)
+    return None
+def workflow_save_output(records, component_id=None, mode="append", save_to=None):
+    if save_to and str(save_to).lower() not in ("db", "database"):
+        return {{"status": "skipped", "reason": "worker saves to db only"}}
+    comp_id = component_id or os.getenv("WORKFLOW_COMPONENT_ID")
+    if not comp_id: raise RuntimeError("workflow_save_output requires component_id or WORKFLOW_COMPONENT_ID")
+    comp = DataSourceComponent.objects.get(pk=int(comp_id))
+    items = records if isinstance(records, list) else [records]
+    for rec in items:
+        if rec is None: continue
+        obj_type = _resolve_obj(ObjectType, rec.get("object_type"), "object_type_name", "object_type_id")
+        obj_inst = _resolve_obj(ObjectInstance, rec.get("object_instance"), "object_instance_name", "object_instance_id")
+        obj_prop = _resolve_property(rec.get("object_type_property"), obj_type)
+        if not obj_type or not obj_inst or not obj_prop: raise RuntimeError("Missing object_type/object_instance/object_type_property")
+        dt = rec.get("date_time")
+        if isinstance(dt, str): dt = parse_datetime(dt)
+        if dt is None: dt = timezone.now()
+        data_set_id = rec.get("data_set_id")
+        if mode == "replace":
+            MainClass.objects.filter(component=comp, object_type=obj_type, object_instance=obj_inst, object_type_property=obj_prop).delete()
+        obj = None
+        if data_set_id:
+            obj = MainClass.objects.get(pk=int(data_set_id), component=comp)
+        else:
+            obj = (
+                MainClass.objects
+                .filter(component=comp, object_type=obj_type, object_instance=obj_inst, object_type_property=obj_prop)
+                .order_by("-data_set_id")
+                .first()
+            )
+        if obj is None:
+            obj = MainClass(component=comp, object_type=obj_type, object_instance=obj_inst, object_type_property=obj_prop)
+        obj.value = rec.get("value")
+        obj.tag = rec.get("tag")
+        obj.description = rec.get("description")
+        obj.date_time = dt
+        obj.save()
+        history_time = obj.date_time or timezone.now()
+        last = (
+            MainClassHistory.objects.filter(main_record=obj)
+            .order_by("-time", "-id")
+            .first()
+        )
+        if not (last and last.time == history_time and last.value == obj.value):
+            MainClassHistory.objects.create(main_record=obj, time=history_time, value=obj.value)
+    return {{"status": "saved_db", "count": len(items)}}
+""".format(worker_dir=worker_dir, project_root=project_root)
+    )
+
+    petex_header = (
+        f"from petex_client import gap, gap_tools\n"
+        f"try:\n"
+        f"    from petex_client.utils import get_srv\n"
+        f"except Exception:\n"
+        f"    def get_srv(allow_none=False):\n"
+        f"        return None\n"
+        f"srv = get_srv(allow_none=True)\n"
+    )
+    footer = "if 'srv' in globals() and srv is not None:\n    srv.close()\n"
+
+    if "from petex_client import" not in code and "import petex_client" not in code:
+        code = base_header + petex_header + "\n" + code + "\n" + footer
+    else:
+        code = base_header + "\n" + code
+
+    temp_path = path + ".auto"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        f.write(code)
+    path = temp_path
+
     env = os.environ.copy()
-    env["PYTHONPATH"] = f"{worker_dir}:{env.get('PYTHONPATH', '')}".rstrip(":")
+    if workflow_component_id is not None:
+        env["WORKFLOW_COMPONENT_ID"] = str(workflow_component_id)
+    env["PYTHONPATH"] = f"{project_root}:{env.get('PYTHONPATH', '')}".rstrip(":")
     proc = subprocess.run(
         [sys.executable, path],
         stdout=subprocess.PIPE,
