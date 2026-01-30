@@ -401,6 +401,8 @@ class Workflow(models.Model):
         related_name="workflow",
     )
     cells = models.JSONField(default=list, blank=True)
+    outputs_config = models.JSONField(default=dict, blank=True)
+    inputs_config = models.JSONField(default=dict, blank=True)
     code_file = models.FileField(upload_to=workflow_code_path, blank=True, null=True)
     ipynb_file = models.FileField(upload_to=workflow_ipynb_path, blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)

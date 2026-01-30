@@ -6,10 +6,12 @@ import shutil
 import datetime as dt
 from pathlib import Path
 import subprocess
+from string import Template
 
 import requests
 from django.utils import timezone
 from django.conf import settings
+from django.db.models import Q
 
 from worker.models import (
     ScenarioLog,
@@ -66,18 +68,23 @@ def run_python_file(path: str, timeout: int = 3600, workflow_component_id: int |
     worker_dir = os.path.abspath(os.path.dirname(__file__))
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     # Inject workflow helpers into executed code
-    base_header = (
+    base_header = Template(
         """import sys, os
 import importlib.abc, importlib.util
-sys.path.insert(0, r"{project_root}")
-sys.path.insert(0, r"{worker_dir}")
+
+# Make project + worker imports resolvable
+sys.path.insert(0, r"$PROJECT_ROOT")
+sys.path.insert(0, r"$WORKER_DIR")
+
 MAIN_SERVER_URL = os.getenv("WORKER_MAIN_SERVER_URL")
 if not MAIN_SERVER_URL:
-    base = os.getenv("DJANGO_BASE_URL", "").rstrip("/")
-    MAIN_SERVER_URL = f"{{base}}/api" if base else "http://localhost:8000/api"
-MAIN_SERVER_MODULE_URL = f"{{MAIN_SERVER_URL}}/module"
+    base = "http://btlweb:8000"
+    MAIN_SERVER_URL = f"{base}/api" if base else "http://btlweb:8000/api"
+    MAIN_SERVER_MODULE_URL = f"{MAIN_SERVER_URL}/module"
+
 DISABLE_REMOTE_IMPORTS = os.getenv("WORKER_DISABLE_REMOTE_IMPORTS", "").lower() in ("1", "true", "yes")
 REMOTE_IMPORT_PREFIXES = [p.strip() for p in os.getenv("WORKER_REMOTE_IMPORT_PREFIXES", "apiapp,petex_client,pi_client").split(",") if p.strip()]
+
 class RemoteModuleLoader(importlib.abc.SourceLoader):
     def __init__(self, fullname):
         self.fullname = fullname
@@ -87,18 +94,19 @@ class RemoteModuleLoader(importlib.abc.SourceLoader):
         except ImportError as e:
             raise ImportError("requests is required for remote imports") from e
         module_path = path.replace(".", "/")
-        url = f"{{MAIN_SERVER_MODULE_URL}}/{{module_path}}"
+        url = f"{MAIN_SERVER_MODULE_URL}/{module_path}"
         resp = requests.get(url, timeout=30)
         if resp.status_code == 404 and "/" not in module_path.split("/")[-1]:
-            url = f"{{MAIN_SERVER_MODULE_URL}}/{{module_path}}/__init__.py"
+            url = f"{MAIN_SERVER_MODULE_URL}/{module_path}/__init__.py"
             resp = requests.get(url, timeout=30)
         if resp.status_code != 200:
-            raise ImportError(f"Failed to fetch: {{url}} ({{resp.status_code}})")
+            raise ImportError(f"Failed to fetch: {url} ({resp.status_code})")
         return resp.text.encode("utf-8")
     def get_filename(self, fullname):
         return fullname
     def is_package(self, fullname):
         return fullname in REMOTE_IMPORT_PREFIXES
+
 class RemoteModuleFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         for prefix in REMOTE_IMPORT_PREFIXES:
@@ -106,102 +114,104 @@ class RemoteModuleFinder(importlib.abc.MetaPathFinder):
                 loader = RemoteModuleLoader(fullname)
                 return importlib.util.spec_from_loader(fullname, loader)
         return None
+
 if not DISABLE_REMOTE_IMPORTS:
     sys.meta_path.insert(0, RemoteModuleFinder())
+
 from worker.db import setup_django
 setup_django()
-from django.utils import timezone
-from django.utils.dateparse import parse_datetime
-from worker.models import MainClass, DataSourceComponent, ObjectType, ObjectInstance, ObjectTypeProperty
-from django.db import models as django_models
-class MainClassHistory(django_models.Model):
-    id = django_models.BigAutoField(primary_key=True)
-    main_record = django_models.ForeignKey(
-        MainClass, on_delete=django_models.CASCADE, related_name="history", db_index=True
-    )
-    time = django_models.DateTimeField("Time", db_index=True)
-    value = django_models.TextField(db_column="value", null=True, blank=True)
-    class Meta:
-        db_table = "apiapp_mainclass_history"
-        verbose_name = "Main Data Record History"
-        verbose_name_plural = "Main Data Record History"
-        app_label = "apiapp"
-        ordering = ["-time"]
-        indexes = [django_models.Index(fields=["main_record", "time"])]
-def _resolve_obj(model, val, name_field, id_field):
-    if val is None: return None
-    if isinstance(val, dict):
-        if val.get(id_field) is not None: return model.objects.get(pk=int(val[id_field]))
-        if val.get("id") is not None: return model.objects.get(pk=int(val["id"]))
-        if val.get(name_field): return model.objects.get(**{{name_field: val[name_field]}})
-        if val.get("name"): return model.objects.get(**{{name_field: val["name"]}})
-        return None
-    if isinstance(val, int): return model.objects.get(pk=val)
-    if isinstance(val, str): return model.objects.get(**{{name_field: val}})
-    if hasattr(val, "pk"): return model.objects.get(pk=val.pk)
-    return None
-def _resolve_property(val, obj_type=None):
-    if val is None: return None
-    if isinstance(val, dict):
-        if val.get("object_type_property_id") is not None: return ObjectTypeProperty.objects.get(pk=int(val["object_type_property_id"]))
-        if val.get("id") is not None: return ObjectTypeProperty.objects.get(pk=int(val["id"]))
-        name = val.get("object_type_property_name") or val.get("name")
-        if name and obj_type: return ObjectTypeProperty.objects.get(object_type=obj_type, object_type_property_name=name)
-        if name: return ObjectTypeProperty.objects.get(object_type_property_name=name)
-        return None
-    if isinstance(val, int): return ObjectTypeProperty.objects.get(pk=val)
-    if isinstance(val, str):
-        if obj_type: return ObjectTypeProperty.objects.get(object_type=obj_type, object_type_property_name=val)
-        return ObjectTypeProperty.objects.get(object_type_property_name=val)
-    if hasattr(val, "pk"): return ObjectTypeProperty.objects.get(pk=val.pk)
-    return None
-def workflow_save_output(records, component_id=None, mode="append", save_to=None):
-    if save_to and str(save_to).lower() not in ("db", "database"):
-        return {{"status": "skipped", "reason": "worker saves to db only"}}
-    comp_id = component_id or os.getenv("WORKFLOW_COMPONENT_ID")
-    if not comp_id: raise RuntimeError("workflow_save_output requires component_id or WORKFLOW_COMPONENT_ID")
-    comp = DataSourceComponent.objects.get(pk=int(comp_id))
-    items = records if isinstance(records, list) else [records]
-    for rec in items:
-        if rec is None: continue
-        obj_type = _resolve_obj(ObjectType, rec.get("object_type"), "object_type_name", "object_type_id")
-        obj_inst = _resolve_obj(ObjectInstance, rec.get("object_instance"), "object_instance_name", "object_instance_id")
-        obj_prop = _resolve_property(rec.get("object_type_property"), obj_type)
-        if not obj_type or not obj_inst or not obj_prop: raise RuntimeError("Missing object_type/object_instance/object_type_property")
-        dt = rec.get("date_time")
-        if isinstance(dt, str): dt = parse_datetime(dt)
-        if dt is None: dt = timezone.now()
-        data_set_id = rec.get("data_set_id")
-        if mode == "replace":
-            MainClass.objects.filter(component=comp, object_type=obj_type, object_instance=obj_inst, object_type_property=obj_prop).delete()
-        obj = None
-        if data_set_id:
-            obj = MainClass.objects.get(pk=int(data_set_id), component=comp)
-        else:
-            obj = (
-                MainClass.objects
-                .filter(component=comp, object_type=obj_type, object_instance=obj_inst, object_type_property=obj_prop)
-                .order_by("-data_set_id")
-                .first()
-            )
-        if obj is None:
-            obj = MainClass(component=comp, object_type=obj_type, object_instance=obj_inst, object_type_property=obj_prop)
-        obj.value = rec.get("value")
-        obj.tag = rec.get("tag")
-        obj.description = rec.get("description")
-        obj.date_time = dt
-        obj.save()
-        history_time = obj.date_time or timezone.now()
-        last = (
-            MainClassHistory.objects.filter(main_record=obj)
-            .order_by("-time", "-id")
-            .first()
-        )
-        if not (last and last.time == history_time and last.value == obj.value):
-            MainClassHistory.objects.create(main_record=obj, time=history_time, value=obj.value)
-    return {{"status": "saved_db", "count": len(items)}}
-""".format(worker_dir=worker_dir, project_root=project_root)
-    )
+
+# Canonical workflow runtime (shared by agent+worker via workflow_shared)
+from worker.workflow_runtime import (
+    AttrDict,
+    MainClassHistory,
+    _AutoColumn,
+    _AutoRowList,
+    _AutoTable,
+    ensure_sample,
+    internal,
+    workflow_instances,
+    workflow_properties,
+    workflow_result_save,
+    workflow_save_output,
+)
+
+
+# Auto-create *OutputsTable/*InputsTable globals from saved workflow config so
+# worker code can reference e.g. WELLOutputsTable without explicitly creating it.
+try:
+    from worker.models import Workflow
+
+    def _safe_ident(name):
+        s = ''.join(ch if (ch.isalnum() or ch == '_') else '_' for ch in str(name))
+        s = s.strip('_')
+        if not s:
+            return None
+        if s[0].isdigit():
+            s = '_' + s
+        return s
+
+    def _coerce_int(v):
+        if v is None:
+            return None
+        try:
+            return int(str(v))
+        except Exception:
+            return None
+
+    def _ensure_tables_from_cfg(cfg, suffix):
+        if not isinstance(cfg, dict):
+            return
+        tabs = cfg.get('tabs')
+        if not isinstance(tabs, list):
+            return
+        for tab in tabs:
+            if not isinstance(tab, dict):
+                continue
+            otype = tab.get('objectType') or tab.get('object_type')
+            if not otype:
+                continue
+            ident = _safe_ident(str(otype).upper())
+            if not ident:
+                continue
+            tname = f"{ident}{suffix}"
+            if tname not in globals() or not isinstance(globals().get(tname), dict):
+                tbl = _AutoTable({'_ObjectType': otype, '_TableName': tname})
+                globals()[tname] = tbl
+            tbl = globals().get(tname)
+            # Populate columns + rows so ComponentId/Row structures exist.
+            instances = tab.get('instances') or []
+            cols = tab.get('columns') or []
+            for c in cols:
+                if not isinstance(c, dict):
+                    continue
+                prop = c.get('property')
+                if not prop:
+                    continue
+                col = tbl[prop]
+                col['ObjectTypeProperty'] = prop
+                c_id = _coerce_int(c.get('componentId') or c.get('component_id') or tab.get('componentId') or tab.get('component_id'))
+                if c_id is not None:
+                    col['ComponentId'] = c_id
+                for inst in instances:
+                    row = col['Row'][inst]
+                    row['ObjectInstance'] = inst
+                    if 'Sample' not in row or not isinstance(row['Sample'], list):
+                        row['Sample'] = []
+                    if row not in col['_row_list']:
+                        col['_row_list'].append(row)
+
+    _cid = os.getenv('WORKFLOW_COMPONENT_ID')
+    _cid = int(_cid) if _cid and str(_cid).isdigit() else None
+    if _cid:
+        _wf = Workflow.objects.filter(component_id=_cid).first()
+        if _wf:
+            _ensure_tables_from_cfg(getattr(_wf, 'outputs_config', None) or {}, 'OutputsTable')
+            _ensure_tables_from_cfg(getattr(_wf, 'inputs_config', None) or {}, 'InputsTable')
+except Exception:
+    pass
+"""
+    ).substitute(PROJECT_ROOT=project_root, WORKER_DIR=worker_dir)
 
     petex_header = (
         f"from petex_client import gap, gap_tools\n"
