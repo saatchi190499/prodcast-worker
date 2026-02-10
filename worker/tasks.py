@@ -1,5 +1,6 @@
 import os
 import csv
+import time
 from pathlib import Path
 
 from celery import shared_task, current_task
@@ -67,6 +68,13 @@ def run_workflow(workflow_id: int, scheduler_id: int = None):
     wf = Workflow.objects.get(pk=workflow_id)
     task_id = current_task.request.id
 
+    def _tail(text: str | None, max_chars: int) -> str | None:
+        if text is None:
+            return None
+        if len(text) <= max_chars:
+            return text
+        return text[-max_chars:]
+
     try:
         # Try to update an existing queued run
         run = WorkflowRun.objects.get(task_id=task_id)
@@ -85,36 +93,52 @@ def run_workflow(workflow_id: int, scheduler_id: int = None):
 
     try:
         if not wf.code_file:
-            run.status = "ERROR"
+            run.status = "FAILURE"
             run.error = "No code file"
             run.finished_at = timezone.now()
             run.save()
-            return {"status": "ERROR", "msg": "No code file"}
+            return {"status": "FAILURE", "msg": "No code file"}
 
         base_url = (os.getenv("DJANGO_BASE_URL") or "").rstrip("/")
         code_url = f"{base_url}{wf.code_file.url}"
         print(f"Downloading workflow code from: {code_url}")
         local_path = download_file(code_url)
 
+        last_db_flush = time.monotonic()
+
+        def on_tick(out_text: str, err_text: str):
+            nonlocal last_db_flush
+            now = time.monotonic()
+            if (now - last_db_flush) < 0.75:
+                return
+            run.output = _tail(out_text, 50_000)
+            run.error = _tail(err_text, 50_000) if err_text else None
+            run.save(update_fields=["output", "error"])
+            last_db_flush = now
+
         rc, out, err = run_python_file(
             local_path,
             timeout=DEFAULT_WORKFLOW_TIMEOUT,
             workflow_component_id=getattr(wf, "component_id", None),
+            live=True,
+            on_tick=on_tick,
+            tick_interval_s=0.75,
+            max_capture_chars=200_000,
         )
         run.finished_at = timezone.now()
-        run.output = out[:5000]
-        run.error = err[:5000] if rc != 0 else None
-        run.status = "SUCCESS" if rc == 0 else "ERROR"
+        run.output = _tail(out, 50_000)
+        run.error = _tail(err, 50_000) if rc != 0 else None
+        run.status = "SUCCESS" if rc == 0 else "FAILURE"
         run.save()
 
         return {"status": run.status}
 
     except Exception as e:
-        run.status = "ERROR"
+        run.status = "FAILURE"
         run.error = str(e)
         run.finished_at = timezone.now()
         run.save()
-        return {"status": "ERROR", "msg": str(e)}
+        return {"status": "FAILURE", "msg": str(e)}
 """
 Scenario utilities and tasks
 """

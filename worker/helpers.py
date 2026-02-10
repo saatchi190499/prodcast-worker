@@ -6,7 +6,10 @@ import shutil
 import datetime as dt
 from pathlib import Path
 import subprocess
+import threading
+import time
 from string import Template
+from collections import deque
 
 import requests
 from django.utils import timezone
@@ -53,7 +56,16 @@ def download_file(url: str) -> str:
     return tmp_path
 
 
-def run_python_file(path: str, timeout: int = 3600, workflow_component_id: int | None = None):
+def run_python_file(
+    path: str,
+    timeout: int = 3600,
+    workflow_component_id: int | None = None,
+    *,
+    live: bool = False,
+    on_tick=None,
+    tick_interval_s: float = 0.75,
+    max_capture_chars: int = 200_000,
+):
     """
     Run a Python script ensuring project imports work and petex_client is available.
     Returns (returncode, stdout, stderr).
@@ -238,16 +250,112 @@ except Exception:
     if workflow_component_id is not None:
         env["WORKFLOW_COMPONENT_ID"] = str(workflow_component_id)
     env["PYTHONPATH"] = f"{project_root}:{env.get('PYTHONPATH', '')}".rstrip(":")
-    proc = subprocess.run(
+    if not live:
+        proc = subprocess.run(
+            [sys.executable, path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            cwd=project_root,
+            env=env,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+
+    stdout_chunks: deque[str] = deque()
+    stderr_chunks: deque[str] = deque()
+    stdout_len = 0
+    stderr_len = 0
+    stdout_dirty = False
+    stderr_dirty = False
+    lock = threading.Lock()
+
+    def _append(chunks: deque[str], cur_len: int, s: str) -> int:
+        if not s:
+            return cur_len
+        chunks.append(s)
+        cur_len += len(s)
+        while cur_len > max_capture_chars and chunks:
+            dropped = chunks.popleft()
+            cur_len -= len(dropped)
+        return cur_len
+
+    def _reader(stream, is_stdout: bool):
+        nonlocal stdout_len, stderr_len, stdout_dirty, stderr_dirty
+        try:
+            for chunk in iter(stream.readline, ""):
+                with lock:
+                    if is_stdout:
+                        stdout_len = _append(stdout_chunks, stdout_len, chunk)
+                        stdout_dirty = True
+                    else:
+                        stderr_len = _append(stderr_chunks, stderr_len, chunk)
+                        stderr_dirty = True
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    proc = subprocess.Popen(
         [sys.executable, path],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
+        bufsize=1,
         cwd=project_root,
         env=env,
     )
-    return proc.returncode, proc.stdout, proc.stderr
+
+    t_out = threading.Thread(target=_reader, args=(proc.stdout, True), daemon=True)
+    t_err = threading.Thread(target=_reader, args=(proc.stderr, False), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    start = time.monotonic()
+    last_tick = start
+
+    while True:
+        try:
+            rc = proc.wait(timeout=0.25)
+            break
+        except subprocess.TimeoutExpired:
+            now = time.monotonic()
+            if on_tick and (now - last_tick) >= tick_interval_s:
+                with lock:
+                    out_dirty = stdout_dirty
+                    err_dirty = stderr_dirty
+                    out_text = "".join(stdout_chunks)
+                    err_text = "".join(stderr_chunks)
+                    stdout_dirty = False
+                    stderr_dirty = False
+
+                if out_dirty or err_dirty:
+                    try:
+                        on_tick(out_text, err_text)
+                    except Exception:
+                        pass
+                last_tick = now
+
+            if (now - start) > timeout:
+                proc.kill()
+                rc = proc.wait(timeout=5)
+                break
+
+    t_out.join(timeout=1)
+    t_err.join(timeout=1)
+
+    with lock:
+        out_text = "".join(stdout_chunks)
+        err_text = "".join(stderr_chunks)
+
+    if on_tick:
+        try:
+            on_tick(out_text, err_text)
+        except Exception:
+            pass
+
+    return rc, out_text, err_text
 
 
 # ---------------------
