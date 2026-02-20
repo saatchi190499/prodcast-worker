@@ -99,7 +99,7 @@ def run_workflow(workflow_id: int, scheduler_id: int = None):
             run.save()
             return {"status": "FAILURE", "msg": "No code file"}
 
-        base_url = (os.getenv("DJANGO_BASE_URL") or "").rstrip("/")
+        base_url = (os.getenv("WORKER_MAIN_SERVER_BASE_URL") or os.getenv("DJANGO_BASE_URL") or "http://host.docker.internal:8000").rstrip("/")
         code_url = f"{base_url}{wf.code_file.url}"
         print(f"Downloading workflow code from: {code_url}")
         local_path = download_file(code_url)
@@ -494,3 +494,4 @@ def run_scenario(scenario_id: int, start_date: str, end_date: str):
         scenario.status = "ERROR"
         scenario.save(update_fields=["status"])
         return {"status": "ERROR", "msg": str(e)}
+

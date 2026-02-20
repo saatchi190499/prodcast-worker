@@ -46,9 +46,14 @@ def build_unit_mapping(unit_system_name: str) -> tuple[object | None, dict[int, 
     return us, mapping
 
 
+def _main_server_headers() -> dict[str, str]:
+    host_header = os.getenv("WORKER_MAIN_SERVER_HOST_HEADER", "").strip()
+    return {"Host": host_header} if host_header else {}
+
+
 def download_file(url: str) -> str:
     """Download a text file via HTTP to a temporary file and return its path."""
-    r = requests.get(url, timeout=60, proxies={})
+    r = requests.get(url, timeout=60, proxies={}, headers=_main_server_headers())
     r.raise_for_status()
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".py")
     with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
@@ -90,9 +95,10 @@ sys.path.insert(0, r"$WORKER_DIR")
 
 MAIN_SERVER_URL = os.getenv("WORKER_MAIN_SERVER_URL")
 if not MAIN_SERVER_URL:
-    base = "http://btlweb:8000"
-    MAIN_SERVER_URL = f"{base}/api" if base else "http://btlweb:8000/api"
-    MAIN_SERVER_MODULE_URL = f"{MAIN_SERVER_URL}/module"
+    base = os.getenv("WORKER_MAIN_SERVER_BASE_URL") or os.getenv("DJANGO_BASE_URL") or "http://host.docker.internal:8000"
+    base = base.rstrip("/")
+    MAIN_SERVER_URL = base if base.endswith("/api") else f"{base}/api"
+MAIN_SERVER_MODULE_URL = f"{MAIN_SERVER_URL.rstrip('/')}/module"
 
 DISABLE_REMOTE_IMPORTS = os.getenv("WORKER_DISABLE_REMOTE_IMPORTS", "").lower() in ("1", "true", "yes")
 REMOTE_IMPORT_PREFIXES = [p.strip() for p in os.getenv("WORKER_REMOTE_IMPORT_PREFIXES", "apiapp,petex_client,pi_client").split(",") if p.strip()]
@@ -107,10 +113,10 @@ class RemoteModuleLoader(importlib.abc.SourceLoader):
             raise ImportError("requests is required for remote imports") from e
         module_path = path.replace(".", "/")
         url = f"{MAIN_SERVER_MODULE_URL}/{module_path}"
-        resp = requests.get(url, timeout=30)
+        resp = requests.get(url, timeout=30, headers={"Host": os.getenv("WORKER_MAIN_SERVER_HOST_HEADER", "btlweb")})
         if resp.status_code == 404 and "/" not in module_path.split("/")[-1]:
             url = f"{MAIN_SERVER_MODULE_URL}/{module_path}/__init__.py"
-            resp = requests.get(url, timeout=30)
+            resp = requests.get(url, timeout=30, headers={"Host": os.getenv("WORKER_MAIN_SERVER_HOST_HEADER", "btlweb")})
         if resp.status_code != 200:
             raise ImportError(f"Failed to fetch: {url} ({resp.status_code})")
         return resp.text.encode("utf-8")
@@ -508,10 +514,10 @@ def download_component_file_to(
     except DataSourceComponent.DoesNotExist:
         return None
 
-    base = os.getenv("DJANGO_BASE_URL")
+    base = os.getenv("WORKER_MAIN_SERVER_BASE_URL") or os.getenv("DJANGO_BASE_URL")
     file_field = getattr(comp, "file", None)
     if not base or not file_field:
-        log_scenario(scenario_id, "Cannot download model: DJANGO_BASE_URL or component.file missing", 20)
+        log_scenario(scenario_id, "Cannot download model: WORKER_MAIN_SERVER_BASE_URL/DJANGO_BASE_URL or component.file missing", 20)
         return None
 
     url = getattr(file_field, "url", None)
@@ -541,7 +547,7 @@ def download_component_file_to(
     # Try network download
     try:
         log_scenario(scenario_id, f"Downloading model file from {full_url}", 20)
-        with requests.get(full_url, timeout=60, stream=True, proxies={"http": None, "https": None}) as r:
+        with requests.get(full_url, timeout=60, stream=True, proxies={"http": None, "https": None}, headers=_main_server_headers()) as r:
             r.raise_for_status()
             filename = Path(name).name if name else Path(url_str).name
             dst = folder / filename
@@ -569,3 +575,6 @@ def download_component_file_to(
         else:
             log_scenario(scenario_id, f"Failed to download model file from {full_url}: {e}", 22)
         return None
+
+
+
